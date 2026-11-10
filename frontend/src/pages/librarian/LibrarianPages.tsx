@@ -9,8 +9,6 @@ import { canRenew, deriveLoanCounts, formatDate, getAvailableCopies, getBookForC
 import { useLibraryStore, type ActionResult } from '../../store/libraryStore'
 import type { Loan } from '../../types/domain'
 
-const DEMO_LIBRARIAN_ID = 2001
-
 function useLibraryData() {
   return useLibraryStore(useShallow((state) => ({
     users: state.users,
@@ -20,6 +18,7 @@ function useLibraryData() {
     copies: state.copies,
     loans: state.loans,
     renewals: state.renewals,
+    demoLibrarianId: state.demoLibrarianId,
   })))
 }
 
@@ -51,7 +50,7 @@ export function LibrarianDashboardPage() {
 
   return (
     <WorkspaceLayout section="librarian">
-      <PageHeading eyebrow="LIBRARY DESK · OVERVIEW" title="사서 업무 현황" description="현재 대출과 반납 예정, 연체 상태를 공유 데모 데이터에서 계산합니다." actions={<Badge tone="blue">DEMO LIBRARIAN · 한서연</Badge>} />
+      <PageHeading eyebrow="LIBRARY DESK · OVERVIEW" title="사서 업무 현황" description="현재 대출과 반납 예정, 연체 상태를 공유 데모 데이터에서 계산합니다." actions={<Badge tone="blue">DEMO LIBRARIAN · {data.users.find((user) => user.userId === data.demoLibrarianId)?.fullName ?? '선택 필요'}</Badge>} />
       <div className="metric-grid four">
         <MetricCard label="현재 대출" value={counts.active} note="미반납 대출 기록 기준" icon={<BookCopy size={17} />} tone="navy" />
         <MetricCard label="반납 예정" value={counts.dueSoon} note="오늘부터 3일 이내" icon={<CalendarClock size={17} />} tone="blue" />
@@ -64,7 +63,7 @@ export function LibrarianDashboardPage() {
           <div className="quick-task-list">
             <Link to="/librarian/checkout"><span className="quick-task-icon"><BookOpenCheck size={18} /></span><span><strong>도서 대출</strong><small>회원과 소장본을 확인하고 대출합니다.</small></span><ArrowRight size={15} /></Link>
             <Link to="/librarian/returns"><span className="quick-task-icon"><RotateCcw size={18} /></span><span><strong>도서 반납</strong><small>미반납 대출과 반납 처리자를 기록합니다.</small></span><ArrowRight size={15} /></Link>
-            <Link to="/librarian/renewals"><span className="quick-task-icon"><CalendarClock size={18} /></span><span><strong>대출 연장</strong><small>조건을 확인하고 기존 기한에 7일을 더합니다.</small></span><ArrowRight size={15} /></Link>
+            <Link to="/librarian/renewals"><span className="quick-task-icon"><CalendarClock size={18} /></span><span><strong>연장 이력 조회</strong><small>성공한 연장과 기한 변경 내역을 확인합니다.</small></span><ArrowRight size={15} /></Link>
             <Link to="/librarian/overdue"><span className="quick-task-icon"><CircleAlert size={18} /></span><span><strong>연체 조회</strong><small>미반납이며 예정일이 지난 건을 확인합니다.</small></span><ArrowRight size={15} /></Link>
           </div>
         </Card>
@@ -98,6 +97,7 @@ export function LibrarianCheckoutPage() {
   const [result, setResult] = useState<ActionResult | null>(null)
   const members = data.users.filter((user) => user.role === 'MEMBER' && `${user.fullName} ${user.loginId} ${user.userId}`.toLocaleLowerCase().includes(memberQuery.trim().toLocaleLowerCase()))
   const selectedMember = data.users.find((user) => user.userId === memberId && user.role === 'MEMBER')
+  const demoLibrarian = data.users.find((user) => user.userId === data.demoLibrarianId)
   const selectedBook = data.books.find((book) => book.bookId === bookId)
   const availableCopies = selectedBook ? getAvailableCopies(selectedBook.bookId, data) : []
   const activeLoans = data.loans.filter((loan) => loan.returnedAt === null)
@@ -113,7 +113,7 @@ export function LibrarianCheckoutPage() {
   }
 
   function handleCheckout() {
-    const outcome = checkout(memberId, copyId, DEMO_LIBRARIAN_ID)
+    const outcome = checkout(memberId, copyId, data.demoLibrarianId)
     setResult(outcome)
     if (outcome.ok) {
       const nextBook = data.books.find((book) => book.bookId !== bookId && getAvailableCopies(book.bookId, data).length > 0)
@@ -154,7 +154,7 @@ export function LibrarianCheckoutPage() {
           </ul>
           {result && <ResultMessage message={result.message} error={!result.ok} />}
           <Button className="button-full" disabled={!canCheckout} onClick={handleCheckout} icon={<BookOpenCheck size={16} />}>대출 처리</Button>
-          <p className="muted-small">대출 처리 사서: 한서연 · 데모 상태만 변경</p>
+          <p className="muted-small">대출 처리 사서: {demoLibrarian?.fullName ?? '선택 없음'} · 데모 상태만 변경</p>
         </Card>
       </div>
       <Notice tone="warning" title="대출 조건">활성 회원, 연체 없음, 회원당 활성 대출 최대 1권, ACTIVE 상태이며 미대출인 소장본을 모두 만족해야 합니다.</Notice>
@@ -169,7 +169,7 @@ export function LibrarianReturnsPage() {
   const activeLoans = data.loans.filter((loan) => loan.returnedAt === null).sort((a, b) => a.currentDueDate.localeCompare(b.currentDueDate))
 
   function handleReturn(loanId: number) {
-    setResult(returnLoan(loanId, DEMO_LIBRARIAN_ID))
+    setResult(returnLoan(loanId, data.demoLibrarianId))
   }
 
   return (
@@ -199,17 +199,14 @@ export function LibrarianReturnsPage() {
 
 export function LibrarianRenewalsPage() {
   const data = useLibraryData()
-  const renewLoan = useLibraryStore((state) => state.renewLoan)
-  const [result, setResult] = useState<ActionResult | null>(null)
   const activeLoans = data.loans.filter((loan) => loan.returnedAt === null).sort((a, b) => a.currentDueDate.localeCompare(b.currentDueDate))
   const recentRenewals = [...data.renewals].sort((a, b) => b.renewedAt.localeCompare(a.renewedAt)).slice(0, 6)
 
   return (
     <WorkspaceLayout section="librarian">
-      <PageHeading eyebrow="LIBRARY DESK · RENEWALS" title="대출 연장" description="미반납·비연체·연장 이력 0건인 대출만 기존 기한에서 7일 연장합니다." actions={<Badge tone="blue">최대 1회 · +7일</Badge>} />
-      {result && <ResultMessage message={result.message} error={!result.ok} />}
+      <PageHeading eyebrow="LIBRARY DESK · RENEWALS" title="연장 이력 조회" description="회원이 직접 처리한 연장과 변경 전·후 반납예정일을 확인합니다." actions={<Badge tone="blue">최대 1회 · +7일</Badge>} />
       <Card className="table-card">
-        <div className="table-card-heading"><SectionHeading title="연장 확인 대상" description="연체 중이거나 이미 연장한 대출은 처리할 수 없습니다." /><Badge tone="neutral">ACTIVE LOANS</Badge></div>
+        <div className="table-card-heading"><SectionHeading title="현재 대출별 연장 상태" description="연장 버튼은 회원 화면에서만 제공합니다." /><Badge tone="neutral">ACTIVE LOANS</Badge></div>
         <DataTable
           rows={activeLoans}
           getRowKey={(loan) => loan.loanId}
@@ -220,7 +217,7 @@ export function LibrarianRenewalsPage() {
             { key: 'due', title: '현재 반납 예정', render: (loan) => formatDate(loan.currentDueDate) },
             { key: 'renewalCount', title: '연장 횟수', render: (loan) => <span>{data.renewals.filter((renewal) => renewal.loanId === loan.loanId).length} / 1회</span> },
             { key: 'eligibility', title: '연장 가능 여부', render: (loan) => <Badge tone={canRenew(loan, data.renewals) ? 'green' : 'neutral'}>{isOverdue(loan) ? '연체로 불가' : canRenew(loan, data.renewals) ? '가능' : '이미 연장함'}</Badge> },
-            { key: 'action', title: '처리', render: (loan) => <Button variant="secondary" disabled={!canRenew(loan, data.renewals)} onClick={() => setResult(renewLoan(loan.loanId, DEMO_LIBRARIAN_ID))} icon={<CalendarClock size={14} />}>7일 연장</Button> },
+            { key: 'action', title: '회원 처리', render: (loan) => <span className="muted-small">{canRenew(loan, data.renewals) ? '회원 화면에서 가능' : isOverdue(loan) ? '연체로 불가' : '연장 완료'}</span> },
           ]}
         />
       </Card>

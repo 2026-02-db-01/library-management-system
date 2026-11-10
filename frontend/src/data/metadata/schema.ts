@@ -229,14 +229,14 @@ export const tableMetadata: Record<TableName, TableMetadata> = {
 }
 
 export const relationships = [
-  { from: 'book', to: 'book_author', label: 'book.book_id → book_author.book_id', cardinality: '1:N', role: '도서 저자 연결' },
-  { from: 'author', to: 'book_author', label: 'author.author_id → book_author.author_id', cardinality: '1:N', role: '저자 도서 연결' },
-  { from: 'book', to: 'book_copy', label: 'book.book_id → book_copy.book_id', cardinality: '1:N', role: '서지정보의 실물 소장본' },
-  { from: 'book_copy', to: 'loan', label: 'book_copy.copy_id → loan.copy_id', cardinality: '1:N', role: '소장본 대출 이력' },
-  { from: 'app_user', to: 'loan', label: 'app_user.user_id → loan.member_user_id', cardinality: '1:N', role: '대출 회원' },
-  { from: 'app_user', to: 'loan', label: 'app_user.user_id → loan.checked_out_by_user_id', cardinality: '1:N', role: '대출 처리 사서' },
-  { from: 'app_user', to: 'loan', label: 'app_user.user_id → loan.returned_by_user_id', cardinality: '1:N · optional', role: '반납 처리 사서. 반납 전 NULL' },
-  { from: 'loan', to: 'loan_renewal', label: 'loan.loan_id → loan_renewal.loan_id', cardinality: '1:N', role: '대출 연장 이력' },
+  { id: 'book-book_author', constraint: 'fk_book_author_book', from: 'book', to: 'book_author', fromColumn: 'book_id', toColumn: 'book_id', label: 'book.book_id → book_author.book_id', cardinality: '1:N', role: '도서 저자 연결' },
+  { id: 'author-book_author', constraint: 'fk_book_author_author', from: 'author', to: 'book_author', fromColumn: 'author_id', toColumn: 'author_id', label: 'author.author_id → book_author.author_id', cardinality: '1:N', role: '저자 도서 연결' },
+  { id: 'book-book_copy', constraint: 'fk_book_copy_book', from: 'book', to: 'book_copy', fromColumn: 'book_id', toColumn: 'book_id', label: 'book.book_id → book_copy.book_id', cardinality: '1:N', role: '서지정보의 실물 소장본' },
+  { id: 'book_copy-loan', constraint: 'fk_loan_copy', from: 'book_copy', to: 'loan', fromColumn: 'copy_id', toColumn: 'copy_id', label: 'book_copy.copy_id → loan.copy_id', cardinality: '1:N', role: '소장본 대출 이력' },
+  { id: 'app_user-loan-member', constraint: 'fk_loan_member', from: 'app_user', to: 'loan', fromColumn: 'user_id', toColumn: 'member_user_id', label: 'app_user.user_id → loan.member_user_id', cardinality: '1:N', role: '대출 회원' },
+  { id: 'app_user-loan-checkout', constraint: 'fk_loan_checkout_librarian', from: 'app_user', to: 'loan', fromColumn: 'user_id', toColumn: 'checked_out_by_user_id', label: 'app_user.user_id → loan.checked_out_by_user_id', cardinality: '1:N', role: '대출 처리 사서' },
+  { id: 'app_user-loan-return', constraint: 'fk_loan_return_librarian', from: 'app_user', to: 'loan', fromColumn: 'user_id', toColumn: 'returned_by_user_id', label: 'app_user.user_id → loan.returned_by_user_id', cardinality: '1:N · optional', role: '반납 처리 사서. 반납 전 NULL' },
+  { id: 'loan-loan_renewal', constraint: 'fk_loan_renewal_loan', from: 'loan', to: 'loan_renewal', fromColumn: 'loan_id', toColumn: 'loan_id', label: 'loan.loan_id → loan_renewal.loan_id', cardinality: '1:N', role: '대출 연장 이력' },
 ] as const
 
 export const dictionary = [

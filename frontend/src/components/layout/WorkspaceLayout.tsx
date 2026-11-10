@@ -15,12 +15,12 @@ const workspaceConfig: Record<WorkspaceKey, { title: string; english: string; de
   librarian: {
     title: '사서 업무 시스템',
     english: 'LIBRARY DESK',
-    description: '대출·반납과 연장 업무를 처리합니다.',
+    description: '대출·반납을 처리하고 연체와 연장 이력을 확인합니다.',
     links: [
       { label: '업무 현황', to: '/librarian', end: true },
       { label: '도서 대출', to: '/librarian/checkout' },
       { label: '도서 반납', to: '/librarian/returns' },
-      { label: '대출 연장', to: '/librarian/renewals' },
+      { label: '연장 이력', to: '/librarian/renewals' },
       { label: '연체 조회', to: '/librarian/overdue' },
     ],
   },
@@ -32,6 +32,7 @@ const workspaceConfig: Record<WorkspaceKey, { title: string; english: string; de
       { label: '대시보드', to: '/admin', end: true },
       { label: '회원 관리', to: '/admin/members' },
       { label: '도서 관리', to: '/admin/books' },
+      { label: 'Authors', to: '/admin/authors' },
       { label: '업무 통계', to: '/admin/statistics' },
     ],
   },

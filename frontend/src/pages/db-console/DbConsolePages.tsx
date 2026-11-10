@@ -7,7 +7,7 @@ import { ErDiagram } from '../../components/diagrams/ErDiagram'
 import { DataTable } from '../../components/tables/DataTable'
 import { WorkspaceLayout } from '../../components/layout/WorkspaceLayout'
 import { Badge, Button, Card, EmptyState, MetricCard, Notice, PageHeading, SectionHeading } from '../../components/ui/Primitives'
-import { dictionary, tableMetadata, tableOrder, type ConstraintKind, type TableName } from '../../data/metadata/schema'
+import { dictionary, relationships, tableMetadata, tableOrder, type ConstraintKind, type TableName } from '../../data/metadata/schema'
 import { getPreviewRows, type PreviewRow } from '../../services/tablePreview'
 import { formatDate } from '../../services/library'
 import { useLibraryStore } from '../../store/libraryStore'
@@ -40,6 +40,46 @@ export function DbTablePage() {
   const isKnownTable = tableOrder.includes(tableName as TableName)
   if (!isKnownTable) return <NotFoundPage />
   return <DbTableDetail key={tableName} tableName={tableName as TableName} />
+}
+
+export function SchemaMetadataPage() {
+  const { tableName } = useParams()
+  const isKnownTable = tableOrder.includes(tableName as TableName)
+  if (!isKnownTable) return <NotFoundPage />
+  const table = tableMetadata[tableName as TableName]
+  const related = relationships.filter((relation) => relation.from === table.name || relation.to === table.name)
+
+  return (
+    <main className="public-schema-page shell-width">
+      <div className="breadcrumb"><Link to="/">홈</Link><ArrowRight size={13} /><Link to="/#catalog">데이터 카탈로그</Link><ArrowRight size={13} /><code>{table.name}</code></div>
+      <PageHeading eyebrow={`SCHEMA METADATA · ${table.columns.length} COLUMNS`} title={table.name} description={table.description} actions={<Badge tone="blue">schema.sql 기준</Badge>} />
+      <Notice tone="info" title="읽기 전용 메타데이터">이 화면은 스키마 설계 설명입니다. 테이블 행을 조회하거나 SQL을 실행하지 않습니다.</Notice>
+      <div className="table-detail-summary"><div><span>한글명</span><strong>{table.label}</strong></div><div><span>컬럼</span><strong>{table.columns.length}</strong></div><div><span>기본키</span><strong>{table.constraints.find((constraint) => constraint.kind === 'PRIMARY KEY')?.columns.join(', ') ?? '없음'}</strong></div><div><span>인덱스</span><strong>{table.indexes.length}</strong></div></div>
+      <section className="public-schema-section"><SectionHeading title="컬럼 정의" description="자료형, NULL 허용 여부, 키 및 참조 대상" /><DataTable rows={table.columns} getRowKey={(column) => column.name} columns={[
+        { key: 'name', title: '컬럼', render: (column) => <code>{column.name}</code> },
+        { key: 'type', title: '자료형', render: (column) => <code>{column.type}</code> },
+        { key: 'key', title: '키', render: (column) => column.key ? <Badge tone={column.key === 'PK' ? 'blue' : column.key === 'FK' ? 'amber' : 'neutral'}>{column.key}</Badge> : '—' },
+        { key: 'null', title: 'NULL', render: (column) => column.nullable ? '허용' : '불가' },
+        { key: 'unique', title: 'UNIQUE', render: (column) => column.key === 'UNIQUE' || table.constraints.some((constraint) => constraint.kind === 'UNIQUE' && constraint.columns.includes(column.name)) ? '예' : '—' },
+        { key: 'default', title: '기본값 / 참조', render: (column) => <span className="metadata-reference">{column.defaultValue ?? column.reference ?? '—'}</span> },
+        { key: 'description', title: '설명', render: (column) => <span className="metadata-description">{column.description}</span> },
+      ]} /></section>
+      <section className="public-schema-section"><SectionHeading title="제약조건" description="PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK" /><DataTable rows={table.constraints} getRowKey={(constraint) => constraint.name} columns={[
+        { key: 'name', title: '이름', render: (constraint) => <code>{constraint.name}</code> },
+        { key: 'kind', title: '유형', render: (constraint) => <Badge tone={constraint.kind === 'PRIMARY KEY' ? 'blue' : constraint.kind === 'FOREIGN KEY' ? 'amber' : 'neutral'}>{constraint.kind}</Badge> },
+        { key: 'definition', title: '정의', render: (constraint) => <code className="constraint-definition">{constraint.definition}</code> },
+        { key: 'purpose', title: '설명', render: (constraint) => <span className="metadata-description">{constraint.purpose}</span> },
+      ]} /></section>
+      <section className="public-schema-section"><SectionHeading title="인덱스" description={`${table.indexes.length}개 인덱스`} />{table.indexes.length ? <DataTable rows={table.indexes} getRowKey={(index) => index.name} columns={[
+        { key: 'name', title: '이름', render: (index) => <code>{index.name}</code> },
+        { key: 'type', title: '유형', render: (index) => `${index.unique ? 'UNIQUE' : 'INDEX'}${index.partial ? ' · PARTIAL' : ''}` },
+        { key: 'definition', title: '정의', render: (index) => <code className="constraint-definition">{index.definition}</code> },
+        { key: 'purpose', title: '용도', render: (index) => <span className="metadata-description">{index.purpose}</span> },
+      ]} /> : <p className="erd-detail-empty">별도 인덱스가 정의되지 않았습니다.</p>}</section>
+      <section className="public-schema-section"><SectionHeading title="직접 연결된 테이블" description="실제 외래키 참조 방향" />{related.length ? <div className="public-related-tables">{related.map((relation) => <Link key={relation.id} to={`/schema/${relation.from === table.name ? relation.to : relation.from}`}><span>{relation.from}.{relation.fromColumn} → {relation.to}.{relation.toColumn}</span><small>{relation.role}</small></Link>)}</div> : <p className="erd-detail-empty">직접 연결된 외래키가 없습니다.</p>}</section>
+      <div className="public-schema-footer"><Link className="button button-secondary" to="/#erd-demo"><span>인터랙티브 ERD로 돌아가기</span><ArrowRight size={15} /></Link></div>
+    </main>
+  )
 }
 
 function DbTableDetail({ tableName }: { tableName: TableName }) {

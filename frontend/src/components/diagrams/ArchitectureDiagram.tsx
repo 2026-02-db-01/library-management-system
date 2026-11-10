@@ -1,9 +1,17 @@
 import { useState } from 'react'
 import { ArrowDown, ArrowRight, BookOpenCheck, Braces, Database, Server, UsersRound } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { useLibraryStore } from '../../store/libraryStore'
 
 export function ArchitectureDiagram() {
   const [backendOpen, setBackendOpen] = useState(false)
+  const navigate = useNavigate()
+  const requestRoleSwitch = useLibraryStore((state) => state.requestRoleSwitch)
+
+  function enterRole(role: 'MEMBER' | 'LIBRARIAN' | 'ADMIN', path: string) {
+    requestRoleSwitch(role, path)
+    navigate(path)
+  }
 
   return (
     <section className="architecture-panel" aria-labelledby="architecture-title">
@@ -20,10 +28,10 @@ export function ArchitectureDiagram() {
             <span className="node-action">서비스 영역 보기</span>
           </button>
           <div className="architecture-children" aria-label="프론트엔드 서비스 영역">
-            <Link to="/user"><UsersRound size={15} /> 유저</Link>
-            <Link to="/librarian"><BookOpenCheck size={15} /> 사서</Link>
-            <Link to="/admin"><Braces size={15} /> 관리자</Link>
-            <Link to="/admin/db-console"><Database size={15} /> DB Console</Link>
+            <Link to="/user/books" onClick={(event) => { event.preventDefault(); enterRole('MEMBER', '/user/books') }}><UsersRound size={15} /> USER</Link>
+            <Link to="/librarian" onClick={(event) => { event.preventDefault(); enterRole('LIBRARIAN', '/librarian') }}><BookOpenCheck size={15} /> LIBRARIAN</Link>
+            <Link to="/admin" onClick={(event) => { event.preventDefault(); enterRole('ADMIN', '/admin') }}><Braces size={15} /> ADMIN</Link>
+            <Link to="/admin/db-console" onClick={(event) => { event.preventDefault(); enterRole('ADMIN', '/admin/db-console') }}><Database size={15} /> DB Console</Link>
           </div>
         </div>
         <div className="architecture-connector" aria-hidden="true"><ArrowRight className="desktop-arrow" size={21} /><ArrowDown className="mobile-arrow" size={18} /><span>업무 데이터 흐름</span></div>

@@ -2,6 +2,26 @@ export type UserRole = 'MEMBER' | 'LIBRARIAN' | 'ADMIN'
 export type AccountStatus = 'ACTIVE' | 'INACTIVE'
 export type RecordStatus = 'ACTIVE' | 'RETIRED'
 
+export type DbFlowOperation = 'SELECT' | 'INSERT' | 'UPDATE' | 'COMMIT' | 'ROLLBACK'
+export type DbFlowStatus = 'pending' | 'active' | 'success' | 'failed'
+
+export interface DbFlowEvent {
+  id: string
+  runId: string
+  step: number
+  createdAt: string
+  operation: DbFlowOperation
+  tableId?: string
+  columnIds?: string[]
+  relationId?: string
+  message: string
+  status: DbFlowStatus
+  before?: unknown
+  after?: unknown
+}
+
+export type DbFlowEventDraft = Omit<DbFlowEvent, 'id' | 'runId' | 'step' | 'createdAt'>
+
 export interface LibraryUser {
   userId: number
   loginId: string

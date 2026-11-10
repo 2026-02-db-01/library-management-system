@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { ArrowRight, BookCopy, BookOpen, Boxes, CircleAlert, Plus, ShieldCheck, UsersRound } from 'lucide-react'
+import { ArrowRight, BookCopy, BookOpen, Boxes, CircleAlert, Pencil, Plus, ShieldCheck, UsersRound } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { DataTable } from '../../components/tables/DataTable'
@@ -9,7 +9,7 @@ import { Badge, Button, Card, Field, MetricCard, Modal, ModalFooter, Notice, Pag
 import { getKoreanDate } from '../../data/mock/seed'
 import { deriveLoanCounts, formatDate, getAvailability, getAuthorsForBook, getBookForCopy, getOverdueDays, isOverdue } from '../../services/library'
 import { useLibraryStore, type ActionResult } from '../../store/libraryStore'
-import type { Book, BookFormValues, LibraryUser, UserRole } from '../../types/domain'
+import type { Author, Book, BookFormValues, LibraryUser, UserRole } from '../../types/domain'
 
 function useAdminData() {
   return useLibraryStore(useShallow((state) => ({
@@ -254,6 +254,63 @@ function BookEditorModal({ book, authors = '', copies = [], data, onClose, onSav
         </aside>}
       </div>
     </Modal>
+  )
+}
+
+export function AdminAuthorsPage() {
+  const data = useAdminData()
+  const addAuthor = useLibraryStore((state) => state.addAuthor)
+  const renameAuthor = useLibraryStore((state) => state.renameAuthor)
+  const [newName, setNewName] = useState('')
+  const [editingAuthor, setEditingAuthor] = useState<Author | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const [result, setResult] = useState<ActionResult | null>(null)
+  const authors = useMemo(() => [...data.authors].sort((a, b) => a.authorName.localeCompare(b.authorName, 'ko')), [data.authors])
+
+  function submitAuthor(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const outcome = addAuthor(newName)
+    setResult(outcome)
+    if (outcome.ok) setNewName('')
+  }
+
+  function submitRename(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!editingAuthor) return
+    const outcome = renameAuthor(editingAuthor.authorId, editingName)
+    setResult(outcome)
+    if (outcome.ok) setEditingAuthor(null)
+  }
+
+  return (
+    <WorkspaceLayout section="admin">
+      <PageHeading eyebrow="ADMINISTRATION · AUTHORS" title="저자 관리" description="도서와 연결된 저자 식별자를 추가하고 이름을 수정합니다." actions={<Badge tone="blue">AUTHOR CATALOG</Badge>} />
+      {result && <ResultMessage message={result.message} error={!result.ok} />}
+      <form className="author-create-form" onSubmit={submitAuthor}>
+        <Field label="새 저자명" hint="최대 150자. 동명이인 저자명은 데이터 모델에서 허용합니다."><input required maxLength={150} value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="저자 이름을 입력하세요" /></Field>
+        <Button type="submit" icon={<Plus size={15} />}>저자 등록</Button>
+      </form>
+      <Card className="table-card">
+        <div className="table-card-heading"><SectionHeading title="저자 목록" description={`${authors.length}명 · 연결된 도서 정보는 book_author에서 계산합니다.`} /><Badge tone="neutral">AUTHOR</Badge></div>
+        <DataTable rows={authors} getRowKey={(author) => author.authorId} emptyMessage="등록된 저자가 없습니다." columns={[
+          { key: 'id', title: '저자 ID', render: (author) => <code>{author.authorId}</code> },
+          { key: 'name', title: '저자명', render: (author) => <strong className="table-primary-value">{author.authorName}</strong> },
+          { key: 'books', title: '연결 도서', render: (author) => {
+            const names = data.bookAuthors.filter((relation) => relation.authorId === author.authorId).map((relation) => data.books.find((book) => book.bookId === relation.bookId)?.title).filter((title): title is string => Boolean(title))
+            return names.length ? <span className="author-book-list">{names.join(' · ')}</span> : <span className="muted-small">연결된 도서 없음</span>
+          } },
+          { key: 'count', title: '연결 수', render: (author) => data.bookAuthors.filter((relation) => relation.authorId === author.authorId).length },
+          { key: 'action', title: '관리', render: (author) => <Button variant="secondary" onClick={() => { setEditingAuthor(author); setEditingName(author.authorName) }} icon={<Pencil size={14} />}>이름 수정</Button> },
+        ]} />
+      </Card>
+      <Notice tone="info" title="이력과 참조 보존">author_name은 UNIQUE 제약이 없어서 동명이인을 허용합니다. 도서에서 참조 중인 저자를 삭제하지 않고 이름을 수정하며, 연결은 `book_author`에 보존합니다.</Notice>
+      {editingAuthor && <Modal title="저자명 수정" description={`AUTHOR #${editingAuthor.authorId}`} onClose={() => setEditingAuthor(null)}>
+        <form onSubmit={submitRename}>
+          <Field label="저자명"><input autoFocus required maxLength={150} value={editingName} onChange={(event) => setEditingName(event.target.value)} /></Field>
+          <ModalFooter><Button type="button" variant="secondary" onClick={() => setEditingAuthor(null)}>취소</Button><Button type="submit" icon={<Pencil size={14} />}>저자명 저장</Button></ModalFooter>
+        </form>
+      </Modal>}
+    </WorkspaceLayout>
   )
 }
 

@@ -2,7 +2,7 @@ import { ArrowUpRight, KeyRound, Link2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { relationships, tableMetadata, tableOrder, type TableName } from '../../data/metadata/schema'
 
-export function TableCard({ tableName }: { tableName: TableName }) {
+export function TableCard({ tableName, basePath = '/admin/db-console/tables' }: { tableName: TableName; basePath?: string }) {
   const table = tableMetadata[tableName]
   const related = [...new Set(relationships.flatMap((relation) => {
     if (relation.from === tableName) return [relation.to]
@@ -11,7 +11,7 @@ export function TableCard({ tableName }: { tableName: TableName }) {
   }))]
 
   return (
-    <Link className="catalog-card" to={`/admin/db-console/tables/${table.name}`}>
+    <Link className="catalog-card" to={`${basePath}/${table.name}`}>
       <div className="catalog-card-top">
         <span className="catalog-card-index">{String(tableOrder.indexOf(tableName) + 1).padStart(2, '0')}</span>
         <ArrowUpRight size={17} aria-hidden="true" />
@@ -27,6 +27,6 @@ export function TableCard({ tableName }: { tableName: TableName }) {
   )
 }
 
-export function CatalogGrid({ tables = tableOrder }: { tables?: TableName[] }) {
-  return <div className="catalog-grid">{tables.map((name) => <TableCard key={name} tableName={name} />)}</div>
+export function CatalogGrid({ tables = tableOrder, basePath }: { tables?: TableName[]; basePath?: string }) {
+  return <div className="catalog-grid">{tables.map((name) => <TableCard key={name} tableName={name} basePath={basePath} />)}</div>
 }
