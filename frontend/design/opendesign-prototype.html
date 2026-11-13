@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#ffffff">
+  <title>책담 · OpenDesign 초기 프로토타입</title>
+  <style>
+    :root { font-family: Pretendard, "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif; color: #26364a; background: #fff; --navy:#1d3557; --blue:#547396; --line:#e3e8ed; --muted:#536174; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    a { color: inherit; text-decoration: none; }
+    button { font: inherit; cursor: pointer; }
+    header { height: 68px; padding: 0 max(22px,calc((100vw - 1120px)/2)); display:flex; align-items:center; gap:40px; border-bottom:1px solid var(--line); }
+    .brand { display:flex; align-items:center; gap:10px; color:var(--navy); font-weight:750; }
+    .brand i { width:31px;height:31px;display:grid;place-items:center;color:#fff;background:var(--navy);border-radius:8px;font-style:normal; }
+    nav { display:flex; align-items:center; gap:25px; color:#66758a; font-size:12px; }
+    nav a:hover,.quiet-link:hover { color:#284e77; }
+    .demo { margin-left:auto;color:#758395;font-size: 12px; }
+    main { width:min(1120px,calc(100% - 40px));margin:auto; }
+    .hero { min-height:395px;padding:62px 0 54px;display:grid;grid-template-columns:1.1fr .9fr;align-items:center;gap:60px; }
+    h1 { margin:16px 0 13px;color:#1b2d46;font-size:clamp(38px,5vw,58px);line-height:1.13;letter-spacing:-.065em; }
+    h1 span { color:#557596; }
+    .intro { max-width:475px;color:#6d7b8d;font-size:13px;line-height:1.9;word-break:keep-all; }
+    .actions { margin-top:22px;display:flex;align-items:center;gap:17px;font-size: 12px;font-weight:650; }
+    .primary { padding:11px 14px;color:white;background:var(--navy);border-radius:5px; }
+    .quiet-link { color:#536981; }
+    .illustration { min-height:275px;position:relative;display:grid;place-items:center; }
+    .paper { width:275px;height:265px;padding:20px;position:relative;background:#f0eee8;border:1px solid #e5e2da;box-shadow:0 8px 20px rgb(34 52 72 / 10%);transform:rotate(1deg); }
+    .paper-top,.paper-bottom { display:flex;justify-content:space-between;color:#778393;font-size: 12px; }
+    .books { position:absolute;left:50%;bottom:68px;transform:translateX(-50%);height:105px;display:flex;align-items:flex-end;gap:4px; }
+    .books i { width:40px;height:82px;display:block;background:#627e8a;border-radius:3px 4px 2px 2px;box-shadow:inset 5px 0 rgb(255 255 255 / 14%); }
+    .books i:nth-child(2){height:102px;width:46px;background:#bd8a66}
+    .books i:nth-child(3){height:91px;background:#253d58}
+    .books i:nth-child(4){height:76px;width:35px;background:#899277}
+    .paper-bottom { position:absolute;bottom:55px;left:20px;right:20px;align-items:end; }
+    .paper-bottom strong { color:#40546b;font-size:12px;line-height:1.5; }
+    .slip { position:absolute;right:0;bottom:0;padding:13px 10px;display:flex;background:white;border:1px solid var(--line);box-shadow:0 4px 12px #18273c12; }
+    .slip span { min-width:85px;padding:0 8px;display:grid;gap:5px;border-right:1px solid var(--line);color:#8290a0;font-size: 12px; }
+    .slip span:last-child { border:0; }
+    .slip strong { color:var(--navy);font-size:18px; }
+    section { padding:40px 0;border-top:1px solid #edf0f3; }
+    .section-head { margin-bottom:19px;display:flex;justify-content:space-between;align-items:end;gap:20px; }
+    .section-head small { color:#71859a;font-size: 12px;letter-spacing:.12em;font-weight:750; }
+    h2 { margin:7px 0 0;color:#2a3d53;font-size:20px;letter-spacing:-.04em; }
+    .section-head p { margin:0;color:#818d9c;font-size: 12px;line-height:1.7; }
+    .areas { display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line); }
+    .area { min-height:132px;padding:16px;border-right:1px solid var(--line);display:flex;flex-direction:column; }
+    .area:last-child { border:0; }
+    .area:hover { background:#f8fafc; }
+    .num { color:#98a4b1;font-size: 12px;letter-spacing:.1em; }
+    .area h3 { margin:15px 0 5px;font-size:12px; }
+    .area p { margin:0;color:#7d8998;font-size: 12px;line-height:1.6; }
+    .map { padding:19px;background:#fafbfd;border:1px solid var(--line); }
+    .flow { display:grid;grid-template-columns:1fr 35px .8fr 35px 1fr;align-items:center;gap:9px; }
+    .node { min-height:65px;padding:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #dce3eb;border-radius:7px;background:white;text-align:left;color:#314a65; }
+    button.node:hover { border-color:#8ca3bb; }
+    .node span { display:grid;gap:5px; }
+    .node small { color:#8290a0;font-size: 12px; }
+    .node em { color:#a47b42;font-size: 12px;font-style:normal; }
+    .arrow { text-align:center;color:#95a2b1;font-size: 12px; }
+    .subnodes { margin-top:7px;display:grid;grid-template-columns:1fr 1fr;gap:5px; }
+    .subnodes a { padding:6px;text-align:center;color:#66778b;background:white;border:1px solid #e5e9ee;border-radius:4px;font-size: 12px; }
+    .explanation { margin-top:12px;padding:12px;border-left:3px solid #bd965f;background:#fbf7ef;color:#7a684d;font-size: 12px;line-height:1.7; }
+    .catalog { display:grid;grid-template-columns:repeat(4,1fr);gap:8px; }
+    .table { min-height:125px;padding:13px;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:6px;transition:border-color .15s,transform .15s; }
+    .table:hover { border-color:#b5c4d3;transform:translateY(-2px); }
+    .table small { color:#8a97a5;font-size: 12px; }
+    .table strong { margin:11px 0 4px;color:#365371;font:700 12px ui-monospace,monospace; }
+    .table span { color:#7e8b9a;font-size: 12px;line-height:1.5; }
+    .catalog-footer { margin-top:15px;display:flex;justify-content:space-between;align-items:center;color:#828e9c;font-size: 12px; }
+    footer { padding:17px 20px;text-align:center;color:#8894a2;border-top:1px solid var(--line);font-size: 12px; }
+    @media(max-width:760px) { header{height:58px;padding:0 18px;gap:20px} nav{gap:11px;font-size: 12px}.hero{padding:43px 0;gap:24px}.areas,.catalog{grid-template-columns:repeat(2,1fr)}.area:nth-child(2){border-right:0}.area:nth-child(-n+2){border-bottom:1px solid var(--line)}.flow{grid-template-columns:1fr}.arrow{height:20px}.arrow span{display:none}.arrow::after{content:"↓"}.node{min-height:54px}.section-head{align-items:flex-start;flex-direction:column;gap:8px} }
+    @media(max-width:520px) { header{gap:10px} nav{display:none}.demo{font-size: 12px}.hero{grid-template-columns:1fr;gap:13px;padding-top:36px}.hero h1{font-size:40px}.hero .intro{font-size: 12px}.illustration{min-height:250px}.paper{width:240px;height:235px}.slip span{min-width:76px}.areas,.catalog{grid-template-columns:1fr}.area,.area:nth-child(2){min-height:112px;border-right:0;border-bottom:1px solid var(--line)}.area:last-child{border-bottom:0}.area h3{margin-top:10px}.catalog-footer{align-items:flex-start;flex-direction:column;gap:11px}.section-head h2{font-size:18px}.map{padding:12px}.subnodes a{padding:8px 3px} }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="brand" href="/"><i aria-hidden="true">冊</i><span>책담</span></a>
+    <nav aria-label="주요 메뉴"><a href="/">홈</a><a href="/user/books">유저</a><a href="/librarian">사서</a><a href="/admin">관리자</a><a href="/admin/db-console/catalog">DB Console</a></nav>
+    <span class="demo">● 로컬 데모 프로토타입</span>
+  </header>
+  <main>
+    <section class="hero" style="border:0">
+      <div>
+        <h1>도서관 통합<br><span>관리 시스템</span></h1>
+        <p class="intro">도서 검색부터 대출·반납 관리, 데이터베이스 구조 탐색까지 하나의 시스템에서 확인할 수 있습니다.</p>
+        <div class="actions"><a class="primary" href="/user/books">도서 검색 시작 →</a><a class="quiet-link" href="#service-areas">서비스 둘러보기</a></div>
+      </div>
+      <div class="illustration" aria-label="책장 그래픽과 데모 도서 수">
+        <div class="paper"><div class="paper-top"><span>오늘의 서가</span><span>LIBRARY / 01</span></div><div class="books" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div class="paper-bottom"><strong>한 권의 책에서<br>데이터의 관계까지</strong></div></div>
+        <div class="slip"><span>등록 도서<strong>8</strong></span><span>실물 소장본<strong>13</strong></span><span>현재 대출<strong>3</strong></span></div>
+      </div>
+    </section>
+    <section id="service-areas">
+      <div class="section-head"><div><small>START HERE · 4 AREAS</small><h2>필요한 업무 공간으로 이동하세요</h2></div><p>각 영역은 같은 데모 데이터를 공유합니다.<br>사서 처리 결과는 유저 화면과 통계에도 반영됩니다.</p></div>
+      <div class="areas">
+        <a class="area" href="/user/books"><span class="num">01</span><h3>유저 서비스</h3><p>도서를 찾고 내 대출 현황을 확인합니다.</p></a>
+        <a class="area" href="/librarian"><span class="num">02</span><h3>사서 업무 시스템</h3><p>대출·반납과 연장 업무를 처리합니다.</p></a>
+        <a class="area" href="/admin"><span class="num">03</span><h3>관리자 대시보드</h3><p>회원과 장서, 업무 통계를 관리합니다.</p></a>
+        <a class="area" href="/admin/db-console/catalog"><span class="num">04</span><h3>DB Console</h3><p>테이블 구조와 관계를 설계 기준으로 탐색합니다.</p></a>
+      </div>
+    </section>
+    <section id="architecture">
+      <div class="section-head"><div><small>SYSTEM MAP · DESIGN VIEW</small><h2>하나의 서비스, 네 가지 업무 공간</h2></div><p>실제 연결 상태가 아닌 설명용 구조입니다.</p></div>
+      <div class="map">
+        <div class="flow">
+          <div><button class="node" onclick="document.getElementById('service-areas').scrollIntoView({behavior:'smooth'})"><span><strong>Frontend</strong><small>React · TypeScript</small></span>서비스 영역 ↓</button><div class="subnodes"><a href="/user/books">유저</a><a href="/librarian">사서</a><a href="/admin">관리자</a><a href="/admin/db-console/catalog">DB Console</a></div></div>
+          <div class="arrow"><span>향후 데이터 흐름</span></div>
+          <button class="node" id="backend-toggle" aria-expanded="false"><span><strong>Backend</strong><small>FastAPI · 예정</small></span><em>연동 예정</em></button>
+          <div class="arrow"><span>예정</span></div>
+          <a class="node" href="#catalog"><span><strong>PostgreSQL</strong><small>schema.sql 기준</small></span>카탈로그 →</a>
+        </div>
+        <div class="explanation" id="backend-description" hidden>이번 단계에서 Backend와 PostgreSQL은 구현하지 않습니다. 화면의 업무 데이터는 브라우저 Mock Store에서만 관리합니다.</div>
+      </div>
+    </section>
+    <section id="catalog">
+      <div class="section-head"><div><small>DATABASE CATALOG · 7 TABLES</small><h2>데이터 구조를 살펴보세요</h2></div><p>database/schema.sql 설계를 읽기 전용으로 탐색합니다.</p></div>
+      <div class="catalog">
+        <a class="table" href="/admin/db-console/tables/app_user"><small>01 · 8 COLUMNS · PK</small><strong>app_user</strong><span>회원·사서·관리자 계정과 역할</span></a>
+        <a class="table" href="/admin/db-console/tables/book"><small>02 · 6 COLUMNS · PK</small><strong>book</strong><span>ISBN 기준 도서 서지정보</span></a>
+        <a class="table" href="/admin/db-console/tables/author"><small>03 · 2 COLUMNS · PK</small><strong>author</strong><span>동명이인을 허용하는 저자 식별</span></a>
+        <a class="table" href="/admin/db-console/tables/book_author"><small>04 · 2 COLUMNS · PK</small><strong>book_author</strong><span>도서와 저자의 복합 키 연결</span></a>
+        <a class="table" href="/admin/db-console/tables/book_copy"><small>05 · 4 COLUMNS · PK</small><strong>book_copy</strong><span>관리번호가 있는 개별 소장본</span></a>
+        <a class="table" href="/admin/db-console/tables/loan"><small>06 · 9 COLUMNS · PK</small><strong>loan</strong><span>대출, 반납과 역할별 사서 FK</span></a>
+        <a class="table" href="/admin/db-console/tables/loan_renewal"><small>07 · 5 COLUMNS · PK</small><strong>loan_renewal</strong><span>연장 시각과 전·후 반납 기한</span></a>
+      </div>
+      <div class="catalog-footer"><span>컬럼·키·인덱스와 데모 레코드 확인</span><a class="primary" href="/admin/db-console/catalog">전체 카탈로그 열기 →</a></div>
+    </section>
+  </main>
+  <footer>설계 기반 화면 시연 · 실제 API와 데이터베이스 연결 없음</footer>
+  <script>
+    const toggle = document.getElementById('backend-toggle');
+    const explanation = document.getElementById('backend-description');
+    toggle?.addEventListener('click', () => { const open = toggle.getAttribute('aria-expanded') !== 'true'; toggle.setAttribute('aria-expanded', String(open)); explanation.hidden = !open; });
+  </script>
+</body>
+</html>
