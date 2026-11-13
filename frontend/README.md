@@ -38,3 +38,16 @@ npm run build
 - `DESIGN.md`: 토큰, 정보 구조, OpenDesign 참고 내용
 
 FastAPI, PostgreSQL, 인증, API, SQL 실행은 구현하지 않았습니다. 향후 서버 연동은 `src/store/libraryStore.ts`의 액션과 데이터 선택 로직을 별도 서비스 계층 구현으로 교체하면 됩니다. 스키마 메타데이터는 서버 응답 모델로 대체하지 말고 설계 문서 기준 자료로 유지합니다.
+
+## 향후 구현 예정
+
+현재 프론트엔드는 Mock 데이터 기반 데모이며, 추후 FastAPI 및 PostgreSQL과 연동할 예정입니다.
+
+- **실제 DB 연동:** 회원, 도서, 대출·반납·연장 데이터를 PostgreSQL에서 조회하고 변경할 수 있도록 구현
+- **DB Viewer:** 관리자 화면에서 실제 테이블, 컬럼, PK/FK, 제약조건, 인덱스 및 레코드를 조회하는 기능
+- **SQL Query Inspector:** 주요 업무 처리 시 실행되는 SQL, 영향을 받는 테이블 및 트랜잭션 결과를 시각화하는 기능
+- **SQL Playground:** 관리자 전용 읽기 전용 SQL 실행 환경 제공 (`SELECT`, `JOIN` 등)
+- **트랜잭션 시연:** 대출·반납·연장의 `COMMIT`, 오류 발생 시 `ROLLBACK` 및 데이터 원자성 검증
+- **인증 및 권한 관리:** 회원·사서·관리자 로그인과 역할별 API 접근 권한 검증
+
+모든 실제 DB 접근 및 SQL 실행은 FastAPI 백엔드를 통해 수행하며, 프론트엔드에서 PostgreSQL에 직접 연결하지 않습니다. SQL Playground는 읽기 전용으로 제한하고, 실행 시간 및 결과 행 수에 제한을 적용할 예정입니다.
