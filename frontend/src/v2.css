@@ -304,3 +304,19 @@ td {
   padding: 12px 0;
   color: var(--navy);
 }
+@media (max-width: 1100px) {
+  .table-detail-two-column {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .constraint-definition,
+  .index-definition,
+  .constraint-list-top code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    min-width: 0;
+  }
+  .preview-toolbar {
+    flex-wrap: wrap;
+  }
+}
