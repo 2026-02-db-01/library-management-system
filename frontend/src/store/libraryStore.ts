@@ -1,389 +1,1039 @@
-import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
-import { addDays, createSeedData, getKoreanDate } from '../data/mock/seed'
-import { canRenew, isOverdue } from '../services/library'
-import type { BookFormValues, DbFlowEventDraft, LibraryData, Loan, UserRole } from '../types/domain'
+﻿import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+import { addDays, createSeedData, getKoreanDate } from "../data/mock/seed";
+import {
+  canRenew,
+  isActiveLoan,
+  isOverdue,
+  normalizeIsbn,
+  suspensionUntil,
+} from "../services/library";
+import type {
+  BookFormValues,
+  CorrectionType,
+  DbFlowEvent,
+  DbFlowEventDraft,
+  LibraryData,
+  Loan,
+  RecordStatus,
+  Snapshot,
+  UserRole,
+} from "../types/domain";
 
 export interface ActionResult {
-  ok: boolean
-  message: string
-  loanId?: number
+  ok: boolean;
+  message: string;
+  loanId?: number;
 }
-
+export interface RequestOptions {
+  requestId?: string;
+  simulateFailure?: boolean;
+}
+export interface CorrectionInput {
+  type: CorrectionType;
+  reason: string;
+  evidence?: string;
+  value?: string;
+  physicalConfirmed?: boolean;
+}
 interface LibraryStore extends LibraryData {
-  demoRole: UserRole | null
-  roleSwitchTarget: string | null
-  demoMemberId: number
-  demoLibrarianId: number
-  dbFlowEvents: import('../types/domain').DbFlowEvent[]
-  requestRoleSwitch: (role: UserRole, targetPath: string) => void
-  completeRoleSwitch: () => void
-  setDemoMember: (userId: number) => void
-  setDemoLibrarian: (userId: number) => void
-  recordDbFlowEvents: (events: DbFlowEventDraft[]) => void
-  clearDbFlowEvents: () => void
-  checkout: (memberUserId: number, copyId: number, librarianUserId: number) => ActionResult
-  returnLoan: (loanId: number, librarianUserId: number) => ActionResult
-  renewLoan: (loanId: number, memberUserId: number, simulateFailure?: boolean) => ActionResult
-  setUserStatus: (userId: number) => ActionResult
-  setUserRole: (userId: number, role: UserRole) => ActionResult
-  addAuthor: (authorName: string) => ActionResult
-  renameAuthor: (authorId: number, authorName: string) => ActionResult
-  addMember: (values: { loginId: string; fullName: string; contact: string }) => ActionResult
-  saveBook: (values: BookFormValues, bookId?: number) => ActionResult
-  addCopy: (bookId: number, copyCode: string) => ActionResult
-  toggleCopyStatus: (copyId: number) => ActionResult
-  setBookStatus: (bookId: number) => ActionResult
-  resetDemo: () => void
+  demoRole: UserRole | null;
+  roleSwitchTarget: string | null;
+  demoMemberId: number;
+  demoLibrarianId: number;
+  demoAdminId: number;
+  dbFlowEvents: DbFlowEvent[];
+  requestRoleSwitch: (role: UserRole, target: string) => void;
+  completeRoleSwitch: () => void;
+  setDemoMember: (id: number) => void;
+  setDemoLibrarian: (id: number) => void;
+  setDemoAdmin: (id: number) => void;
+  recordDbFlowEvents: (events: DbFlowEventDraft[]) => void;
+  clearDbFlowEvents: () => void;
+  checkout: (
+    member: number,
+    copy: number,
+    staff: number,
+    options?: RequestOptions,
+  ) => ActionResult;
+  returnLoan: (
+    loan: number,
+    staff: number,
+    options?: RequestOptions & { damaged?: boolean; reason?: string },
+  ) => ActionResult;
+  renewLoan: (
+    loan: number,
+    member: number,
+    failure?: boolean,
+    options?: RequestOptions,
+  ) => ActionResult;
+  correctLoan: (
+    loan: number,
+    input: CorrectionInput,
+    options?: RequestOptions,
+  ) => ActionResult;
+  setUserStatus: (id: number, reason?: string) => ActionResult;
+  setUserRole: (id: number, role: UserRole) => ActionResult;
+  addAuthor: (name: string) => ActionResult;
+  renameAuthor: (id: number, name: string) => ActionResult;
+  addMember: (v: AccountInput) => ActionResult;
+  addStaff: (v: AccountInput & { role: "LIBRARIAN" | "ADMIN" }) => ActionResult;
+  updateProfile: (
+    id: number,
+    v: { fullName: string; contact: string },
+  ) => ActionResult;
+  withdrawMember: (id: number, failure?: boolean) => ActionResult;
+  saveBook: (v: BookFormValues, id?: number) => ActionResult;
+  addCopy: (bookId: number, ignoredCode?: string) => ActionResult;
+  changeCopyStatus: (
+    id: number,
+    status: RecordStatus,
+    reason: string,
+    failure?: boolean,
+  ) => ActionResult;
+  toggleCopyStatus: (id: number) => ActionResult;
+  setBookStatus: (id: number) => ActionResult;
+  resetDemo: () => void;
 }
-
-function maxId<T extends object>(values: T[], key: keyof T, fallback: number): number {
-  return Math.max(fallback, ...values.map((item) => Number(item[key] ?? 0)))
+interface AccountInput {
+  loginId: string;
+  fullName: string;
+  contact: string;
 }
-
-function validLibrarian(data: LibraryData, userId: number): boolean {
-  return data.users.some((user) => user.userId === userId && user.role === 'LIBRARIAN' && user.accountStatus === 'ACTIVE')
+const ok = (message: string, loanId?: number): ActionResult => ({
+  ok: true,
+  message,
+  loanId,
+});
+const fail = (message: string): ActionResult => ({ ok: false, message });
+const nextId = (rows: object[], key: string) =>
+  Math.max(0, ...rows.map((r) => Number((r as Record<string, unknown>)[key]))) +
+  1;
+const now = () => new Date().toISOString();
+export const dataKeys = [
+  "users",
+  "books",
+  "authors",
+  "bookAuthors",
+  "copies",
+  "loans",
+  "renewals",
+  "staffHistory",
+  "bookHistory",
+  "copyHistory",
+  "corrections",
+  "requests",
+] as const;
+function dataOf(s: LibraryData): LibraryData {
+  return Object.fromEntries(
+    dataKeys.map((k) => [k, structuredClone(s[k])]),
+  ) as unknown as LibraryData;
 }
-
-function dbEvent(
-  operation: DbFlowEventDraft['operation'],
-  message: string,
-  details: Omit<Partial<DbFlowEventDraft>, 'operation' | 'message'> = {},
-): DbFlowEventDraft {
-  return { operation, message, status: 'success', ...details }
+function snapshot(l?: Loan): Snapshot {
+  return l
+    ? {
+        returned_at: l.returnedAt,
+        returned_by_user_id: l.returnedByUserId,
+        current_due_date: l.currentDueDate,
+        is_cancelled: l.isCancelled,
+        cancelled_at: l.cancelledAt,
+      }
+    : {};
 }
-
-function normalizeIsbn(value: string): string {
-  return value.replace(/[\s-]/g, '')
+function recalculate(d: LibraryData) {
+  d.users.forEach((u) => {
+    u.borrowingSuspendedUntil =
+      u.role === "MEMBER" && u.accountStatus === "ACTIVE"
+        ? suspensionUntil(u.userId, d.loans)
+        : null;
+  });
 }
-
-function validIsbn13(value: string): boolean {
-  if (!/^\d{13}$/.test(value)) return false
-  const sum = [...value.slice(0, 12)].reduce((total, digit, index) => total + Number(digit) * (index % 2 === 0 ? 1 : 3), 0)
-  return (10 - (sum % 10)) % 10 === Number(value[12])
-}
-
-function authorIdsForNames(data: LibraryData, value: string): { authors: LibraryData['authors']; authorIds: number[] } {
-  const names = [...new Set(value.split(/[;,、]/).map((name) => name.trim()).filter(Boolean))]
-  let authors = [...data.authors]
-  let nextId = maxId(authors, 'authorId', 700)
-  const authorIds = names.map((name) => {
-    const existing = authors.find((author) => author.authorName.toLocaleLowerCase() === name.toLocaleLowerCase())
-    if (existing) return existing.authorId
-    nextId += 1
-    authors = [...authors, { authorId: nextId, authorName: name }]
-    return nextId
-  })
-  return { authors, authorIds }
-}
-
-function renewalsForLoan(loan: Loan, state: LibraryData) {
-  const previousDueDate = loan.currentDueDate
-  const newDueDate = addDays(previousDueDate, 7)
-  const renewalId = maxId(state.renewals, 'renewalId', 9500) + 1
+function initial() {
+  const d = createSeedData();
+  recalculate(d);
   return {
-    currentDueDate: newDueDate,
-    renewal: {
-      renewalId,
-      loanId: loan.loanId,
-      renewedAt: new Date().toISOString(),
-      previousDueDate,
-      newDueDate,
-    },
-  }
+    ...d,
+    demoRole: null,
+    roleSwitchTarget: null,
+    demoMemberId: 1001,
+    demoLibrarianId: 2001,
+    demoAdminId: 3001,
+    dbFlowEvents: [],
+  };
+}
+function actor(s: LibraryStore, role: UserRole, id?: number) {
+  const selected =
+    role === "MEMBER"
+      ? s.demoMemberId
+      : role === "LIBRARIAN"
+        ? s.demoLibrarianId
+        : s.demoAdminId;
+  return (
+    s.demoRole === role &&
+    (id === undefined || id === selected) &&
+    s.users.some(
+      (u) =>
+        u.userId === selected &&
+        u.role === role &&
+        u.accountStatus === "ACTIVE",
+    )
+  );
+}
+function account(
+  d: LibraryData,
+  v: { loginId?: string; fullName: string; contact: string },
+  role: UserRole,
+  id?: number,
+) {
+  const contact = v.contact.replace(/[\s-]/g, "");
+  if (
+    !v.fullName.trim() ||
+    v.fullName.length > 100 ||
+    !/^\d{10,11}$/.test(contact)
+  )
+    throw Error("이름(1~100자)과 연락처(숫자 10~11자리)를 확인하세요.");
+  if (
+    role === "MEMBER" &&
+    d.users.some(
+      (u) =>
+        u.userId !== id &&
+        u.role === "MEMBER" &&
+        u.accountStatus === "ACTIVE" &&
+        u.contact === contact,
+    )
+  )
+    throw Error("활성 회원이 사용 중인 연락처입니다.");
+  if (
+    v.loginId !== undefined &&
+    (!v.loginId.trim() ||
+      v.loginId.length > 50 ||
+      d.users.some((u) => u.userId !== id && u.loginId === v.loginId!.trim()))
+  )
+    throw Error("로그인 ID 길이(1~50자) 또는 중복을 확인하세요.");
+  return contact;
 }
 
-const initialData = createSeedData()
-
+function containsPatronIdentity(text: string, users: LibraryData["users"]) {
+  return (
+    /0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}/.test(text) ||
+    users.some(
+      (u) =>
+        u.role === "MEMBER" &&
+        [u.fullName, u.loginId, u.contact, String(u.userId)].some(
+          (value) => value !== null && value.length > 2 && text.includes(value),
+        ),
+    )
+  );
+}
+export const safeStorage = {
+  getItem: (key: string) => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const v = JSON.parse(raw);
+      const valid =
+        v.version === 2 &&
+        dataKeys.every(
+          (k) =>
+            Array.isArray(v.state?.[k]) &&
+            v.state[k].every(
+              (row: unknown) => row !== null && typeof row === "object",
+            ),
+        ) &&
+        v.state.users.every(
+          (u: Record<string, unknown>) =>
+            Number.isSafeInteger(u.userId) &&
+            ["MEMBER", "LIBRARIAN", "ADMIN"].includes(String(u.role)) &&
+            ["ACTIVE", "INACTIVE", "WITHDRAWN"].includes(
+              String(u.accountStatus),
+            ),
+        ) &&
+        v.state.books.every(
+          (b: Record<string, unknown>) =>
+            typeof b.title === "string" && typeof b.categoryCode === "string",
+        ) &&
+        v.state.loans.every(
+          (l: Record<string, unknown>) =>
+            typeof l.isCancelled === "boolean" &&
+            typeof l.currentDueDate === "string",
+        );
+      return valid ? raw : null;
+    } catch {
+      return null;
+    }
+  },
+  setItem: (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      /* memory-only fallback */
+    }
+  },
+  removeItem: (key: string) => {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* unavailable */
+    }
+  },
+};
 export const useLibraryStore = create<LibraryStore>()(
   persist(
-    (set, get) => ({
-      ...initialData,
-      demoRole: null,
-      roleSwitchTarget: null,
-      demoMemberId: 1001,
-      demoLibrarianId: 2001,
-      dbFlowEvents: [],
-      requestRoleSwitch: (role, targetPath) => set({ demoRole: role, roleSwitchTarget: targetPath }),
-      completeRoleSwitch: () => set({ roleSwitchTarget: null }),
-      setDemoMember: (userId) => set({ demoMemberId: userId }),
-      setDemoLibrarian: (userId) => set({ demoLibrarianId: userId }),
-      recordDbFlowEvents: (drafts) => {
-        if (!drafts.length) return
-        const timestamp = Date.now()
-        const runId = `run-${timestamp}-${Math.random().toString(36).slice(2, 7)}`
-        const events = drafts.map((draft, index) => ({
-          ...draft,
-          id: `${runId}-${index + 1}`,
-          runId,
-          step: index + 1,
-          createdAt: new Date(timestamp + index).toISOString(),
-        }))
-        set((state) => ({ dbFlowEvents: [...events.reverse(), ...state.dbFlowEvents].slice(0, 120) }))
-      },
-      clearDbFlowEvents: () => set({ dbFlowEvents: [] }),
-      checkout: (memberUserId, copyId, librarianUserId) => {
-        const state = get()
-        const checks: DbFlowEventDraft[] = []
-        const fail = (message: string, tableId: string, columnIds: string[] = [], relationId?: string) => {
-          get().recordDbFlowEvents([
-            ...checks,
-            dbEvent('SELECT', `검증 중단: ${message}`, { tableId, columnIds, relationId, status: 'failed' }),
-            dbEvent('ROLLBACK', 'Mock 대출 트랜잭션을 취소했습니다. 데이터는 변경되지 않았습니다.'),
-          ])
-          return { ok: false, message }
+    (set, get) => {
+      function commit(
+        work: (d: LibraryData, s: LibraryStore) => ActionResult,
+        failure = false,
+        extra: Partial<LibraryStore> = {},
+      ): ActionResult {
+        try {
+          const s = get(),
+            d = dataOf(s),
+            result = work(d, s);
+          if (!result.ok) return result;
+          if (failure)
+            throw Error(
+              "오류 시연: 이력 저장 실패. 전체 Mock 변경을 롤백했습니다.",
+            );
+          recalculate(d);
+          set({ ...d, ...extra });
+          return result;
+        } catch (e) {
+          return fail(e instanceof Error ? e.message : "처리 실패");
         }
-        checks.push(dbEvent('SELECT', '대출을 처리할 활성 사서 계정을 확인합니다.', { tableId: 'app_user', columnIds: ['user_id', 'role', 'account_status'] }))
-        if (!validLibrarian(state, librarianUserId)) return fail('활성 사서 데모 계정을 확인해 주세요.', 'app_user', ['role', 'account_status'])
-        const member = state.users.find((user) => user.userId === memberUserId && user.role === 'MEMBER')
-        checks.push(dbEvent('SELECT', '회원 역할과 활성 상태를 확인합니다.', { tableId: 'app_user', columnIds: ['user_id', 'role', 'account_status'] }))
-        if (!member) return fail('회원 정보를 찾을 수 없습니다.', 'app_user', ['user_id', 'role'])
-        if (member.accountStatus !== 'ACTIVE') return fail('비활성 회원은 대출할 수 없습니다.', 'app_user', ['account_status'])
-        checks.push(dbEvent('SELECT', '회원 ID로 미반납 대출과 연체 여부를 확인합니다.', { tableId: 'loan', columnIds: ['member_user_id', 'current_due_date', 'returned_at'], relationId: 'app_user-loan-member' }))
-        const activeLoans = state.loans.filter((loan) => loan.returnedAt === null)
-        if (activeLoans.some((loan) => loan.memberUserId === memberUserId && isOverdue(loan))) return fail('연체 중인 도서가 있어 신규 대출을 처리할 수 없습니다.', 'loan', ['current_due_date', 'returned_at'], 'app_user-loan-member')
-        if (activeLoans.some((loan) => loan.memberUserId === memberUserId)) return fail('회원당 활성 대출은 1권까지 가능합니다. 현재 대출을 먼저 반납해 주세요.', 'loan', ['member_user_id', 'returned_at'], 'app_user-loan-member')
-        checks.push(dbEvent('SELECT', '선택한 서지정보와 실물 소장본의 관리 상태를 확인합니다.', { tableId: 'book_copy', columnIds: ['copy_id', 'book_id', 'management_status'], relationId: 'book-book_copy' }))
-        const copy = state.copies.find((item) => item.copyId === copyId)
-        const book = copy ? state.books.find((item) => item.bookId === copy.bookId) : undefined
-        if (!copy || !book) return fail('소장본을 찾을 수 없습니다.', 'book_copy', ['copy_id', 'book_id'])
-        if (book.catalogStatus !== 'ACTIVE' || copy.managementStatus !== 'ACTIVE') {
-          return fail('제적 또는 비활성 소장본은 대출할 수 없습니다.', 'book_copy', ['management_status'], 'book-book_copy')
+      }
+      function transaction(
+        operation: LibraryData["requests"][number]["operationType"],
+        target: number | null,
+        options: RequestOptions,
+        payload: object,
+        work: (d: LibraryData, s: LibraryStore) => ActionResult,
+      ): ActionResult {
+        const s = get(),
+          id = options.requestId ?? crypto.randomUUID();
+        if (
+          Object.values(payload).some(
+            (value) =>
+              typeof value === "string" &&
+              containsPatronIdentity(value, s.users),
+          )
+        )
+          return fail(
+            "사유·증빙에는 회원 이름·ID·연락처를 넣을 수 없습니다. 비식별 업무 사실만 입력하세요.",
+          );
+        if (
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            id,
+          )
+        )
+          return fail("요청 ID는 UUID여야 합니다.");
+        const fingerprint = bytesToHex(
+          sha256(
+            new TextEncoder().encode(
+              JSON.stringify({ operation, target, ...payload }),
+            ),
+          ),
+        );
+        const actingId =
+          s.demoRole === "MEMBER"
+            ? s.demoMemberId
+            : s.demoRole === "LIBRARIAN"
+              ? s.demoLibrarianId
+              : s.demoAdminId;
+        if (!s.demoRole || !actor(s, s.demoRole))
+          return fail("활성 데모 계정을 선택하세요.");
+        const prior = s.requests.find((r) => r.requestId === id);
+        if (prior) {
+          if (
+            prior.actorUserId !== actingId ||
+            prior.requestFingerprint !== fingerprint
+          )
+            return fail("요청 ID 충돌: 요청자 또는 내용이 다릅니다.");
+          return prior.processingStatus === "COMPLETED"
+            ? ok(
+                "완료된 동일 요청의 Mock 결과입니다.",
+                prior.targetLoanId ?? undefined,
+              )
+            : fail("완료되지 않은 요청입니다. 다시 확인하세요.");
         }
-        checks.push(dbEvent('SELECT', '소장본 ID로 기존 미반납 대출이 있는지 확인합니다.', { tableId: 'loan', columnIds: ['copy_id', 'returned_at'], relationId: 'book_copy-loan' }))
-        if (activeLoans.some((loan) => loan.copyId === copyId)) return fail('이미 대출 중인 소장본입니다.', 'loan', ['copy_id', 'returned_at'], 'book_copy-loan')
-        const today = getKoreanDate()
-        const loanId = maxId(state.loans, 'loanId', 9000) + 1
-        const loan: Loan = {
-          loanId,
-          memberUserId,
-          copyId,
-          checkedOutByUserId: librarianUserId,
-          borrowedAt: new Date().toISOString(),
-          initialDueDate: addDays(today, 14),
-          currentDueDate: addDays(today, 14),
-          returnedAt: null,
-          returnedByUserId: null,
-        }
-        set({ loans: [loan, ...state.loans] })
+        const result = commit((d, current) => {
+          const r = work(d, current);
+          if (r.ok)
+            d.requests.push({
+              requestId: id,
+              operationType: operation,
+              requestFingerprint: fingerprint,
+              processingStatus: "COMPLETED",
+              resultCode: "MOCK_OK",
+              responseSnapshot: { ok: true },
+              actorUserId: actingId,
+              targetLoanId: r.loanId ?? target,
+              requestedAt: now(),
+              completedAt: now(),
+            });
+          return r;
+        }, options.simulateFailure);
         get().recordDbFlowEvents([
-          ...checks,
-          dbEvent('INSERT', '대출 대상은 loan 행입니다. book_copy.management_status는 변경하지 않습니다.', { tableId: 'loan', columnIds: ['member_user_id', 'copy_id', 'checked_out_by_user_id', 'borrowed_at', 'initial_due_date', 'current_due_date', 'returned_at'] }),
-          dbEvent('COMMIT', 'Mock 대출 처리가 완료되었습니다.', { tableId: 'loan' }),
-        ])
-        return { ok: true, message: `${book.title} 대출이 완료되었습니다. 반납 예정일은 ${loan.currentDueDate}입니다.`, loanId }
-      },
-      returnLoan: (loanId, librarianUserId) => {
-        const state = get()
-        const checks: DbFlowEventDraft[] = []
-        const fail = (message: string, columnIds: string[] = ['loan_id']) => {
-          get().recordDbFlowEvents([
-            ...checks,
-            dbEvent('SELECT', `반납 확인 실패: ${message}`, { tableId: 'loan', columnIds, status: 'failed' }),
-            dbEvent('ROLLBACK', 'Mock 반납 트랜잭션을 취소했습니다. 데이터는 변경되지 않았습니다.'),
-          ])
-          return { ok: false, message }
-        }
-        if (!validLibrarian(state, librarianUserId)) return fail('활성 사서 데모 계정을 확인해 주세요.', ['checked_out_by_user_id'])
-        checks.push(dbEvent('SELECT', '반납 대상 loan과 미반납 상태를 확인합니다.', { tableId: 'loan', columnIds: ['loan_id', 'copy_id', 'returned_at'] }))
-        const loan = state.loans.find((item) => item.loanId === loanId)
-        if (!loan) return fail('대출 기록을 찾을 수 없습니다.')
-        if (loan.returnedAt !== null) return fail('이미 반납 처리된 대출입니다.', ['returned_at'])
-        const returnedAt = new Date().toISOString()
-        set({ loans: state.loans.map((item) => item.loanId === loanId ? { ...item, returnedAt, returnedByUserId: librarianUserId } : item) })
-        get().recordDbFlowEvents([
-          ...checks,
-          dbEvent('UPDATE', '반납 시각과 처리 사서를 같은 loan 행에 기록합니다.', { tableId: 'loan', columnIds: ['returned_at', 'returned_by_user_id'], before: { returned_at: null, returned_by_user_id: null }, after: { returned_at: returnedAt, returned_by_user_id: librarianUserId } }),
-          dbEvent('COMMIT', 'Mock 반납 처리가 완료되었습니다. 대출 이력은 유지됩니다.', { tableId: 'loan' }),
-        ])
-        return { ok: true, message: '반납이 완료되었습니다. 데모 대출 상태를 갱신했습니다.' }
-      },
-      renewLoan: (loanId, memberUserId, simulateFailure = false) => {
-        const state = get()
-        const checks: DbFlowEventDraft[] = []
-        const member = state.users.find((user) => user.userId === memberUserId && user.role === 'MEMBER')
-        checks.push(dbEvent('SELECT', '현재 데모 회원과 대출 회원 참조를 확인합니다.', { tableId: 'app_user', columnIds: ['user_id', 'role'], relationId: 'app_user-loan-member' }))
-        if (!member) {
-          get().recordDbFlowEvents([
-            ...checks,
-            dbEvent('SELECT', '회원 검증에 실패했습니다.', { tableId: 'app_user', columnIds: ['role'], status: 'failed' }),
-            dbEvent('ROLLBACK', 'Mock 연장 처리를 취소했습니다. 데이터는 변경되지 않았습니다.'),
-          ])
-          return { ok: false, message: '회원 데모 계정을 확인해 주세요.' }
-        }
-        checks.push(dbEvent('SELECT', '미반납 대출과 현재 반납 예정일을 조회합니다.', { tableId: 'loan', columnIds: ['loan_id', 'member_user_id', 'current_due_date', 'returned_at'] }))
-        const loan = state.loans.find((item) => item.loanId === loanId)
-        if (!loan) {
-          get().recordDbFlowEvents([...checks, dbEvent('SELECT', '대출 기록을 찾을 수 없습니다.', { tableId: 'loan', status: 'failed' }), dbEvent('ROLLBACK', 'Mock 연장 처리를 취소했습니다. 데이터는 변경되지 않았습니다.')])
-          return { ok: false, message: '대출 기록을 찾을 수 없습니다.' }
-        }
-        if (loan.memberUserId !== memberUserId) {
-          get().recordDbFlowEvents([...checks, dbEvent('SELECT', '본인 대출이 아니므로 연장을 거부했습니다.', { tableId: 'loan', columnIds: ['member_user_id'], relationId: 'app_user-loan-member', status: 'failed' }), dbEvent('ROLLBACK', 'Mock 연장 처리를 취소했습니다. 데이터는 변경되지 않았습니다.')])
-          return { ok: false, message: '본인의 대출만 연장할 수 있습니다.' }
-        }
-        checks.push(dbEvent('SELECT', '해당 대출의 연장 이력을 조회해 횟수를 확인합니다.', { tableId: 'loan_renewal', columnIds: ['loan_id', 'renewed_at'], relationId: 'loan-loan_renewal' }))
-        if (!canRenew(loan, state.renewals)) {
-          get().recordDbFlowEvents([...checks, dbEvent('SELECT', '미반납·비연체·연장 0회 조건을 만족하지 않습니다.', { tableId: 'loan', columnIds: ['returned_at', 'current_due_date'], status: 'failed' }), dbEvent('ROLLBACK', 'Mock 연장 처리를 취소했습니다. 데이터는 변경되지 않았습니다.')])
-          return { ok: false, message: '반납, 연체 또는 1회 연장 여부를 확인해 주세요.' }
-        }
-        const result = renewalsForLoan(loan, state)
-        if (simulateFailure) {
-          get().recordDbFlowEvents([
-            ...checks,
-            dbEvent('UPDATE', '트랜잭션 안에서 loan.current_due_date 변경을 준비합니다.', { tableId: 'loan', columnIds: ['current_due_date'], before: loan.currentDueDate, after: result.currentDueDate }),
-            dbEvent('INSERT', '시연 오류: loan_renewal 이력 생성이 실패했습니다.', { tableId: 'loan_renewal', columnIds: ['loan_id', 'previous_due_date', 'new_due_date'], relationId: 'loan-loan_renewal', status: 'failed' }),
-            dbEvent('ROLLBACK', 'Mock 상태를 연장 전 값으로 되돌렸습니다. 부분 변경은 남지 않았습니다.', { tableId: 'loan', columnIds: ['current_due_date'] }),
-          ])
-          return { ok: false, message: '오류 시연: loan_renewal 생성 실패를 가정해 전체 Mock 변경을 롤백했습니다.' }
-        }
-        set({
-          loans: state.loans.map((item) => item.loanId === loanId ? { ...item, currentDueDate: result.currentDueDate } : item),
-          renewals: [result.renewal, ...state.renewals],
-        })
-        get().recordDbFlowEvents([
-          ...checks,
-          dbEvent('UPDATE', '기존 loan.current_due_date를 7일 연장합니다.', { tableId: 'loan', columnIds: ['current_due_date'], before: loan.currentDueDate, after: result.currentDueDate }),
-          dbEvent('INSERT', '변경 전·후 기한을 loan_renewal 이력에 추가합니다.', { tableId: 'loan_renewal', columnIds: ['loan_id', 'previous_due_date', 'new_due_date'], relationId: 'loan-loan_renewal', before: null, after: result.renewal }),
-          dbEvent('COMMIT', 'Mock 연장 트랜잭션이 완료되었습니다.', { tableId: 'loan' }),
-        ])
-        return { ok: true, message: `반납 예정일이 ${result.currentDueDate}로 7일 연장되었습니다.` }
-      },
-      setUserStatus: (userId) => {
-        const state = get()
-        const user = state.users.find((item) => item.userId === userId)
-        if (!user) return { ok: false, message: '회원 정보를 찾을 수 없습니다.' }
-        if (user.role === 'MEMBER' && user.accountStatus === 'ACTIVE' && state.loans.some((loan) => loan.memberUserId === userId && loan.returnedAt === null)) {
-          return { ok: false, message: '미반납 대출이 있는 회원은 비활성화할 수 없습니다.' }
-        }
-        const next = user.accountStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
-        set({ users: state.users.map((item) => item.userId === userId ? { ...item, accountStatus: next } : item) })
-        return { ok: true, message: `${user.fullName} 계정이 ${next === 'ACTIVE' ? '활성' : '비활성'} 상태로 변경되었습니다.` }
-      },
-      setUserRole: (userId, role) => {
-        const state = get()
-        const user = state.users.find((item) => item.userId === userId)
-        if (!user) return { ok: false, message: '계정을 찾을 수 없습니다.' }
-        if (user.role === 'MEMBER' && role !== 'MEMBER' && state.loans.some((loan) => loan.memberUserId === userId && loan.returnedAt === null)) {
-          return { ok: false, message: '미반납 대출이 있는 회원의 역할은 변경할 수 없습니다.' }
-        }
-        set({ users: state.users.map((item) => item.userId === userId ? { ...item, role } : item) })
-        return { ok: true, message: '데모 계정 역할을 변경했습니다.' }
-      },
-      addAuthor: (authorName) => {
-        const state = get()
-        const name = authorName.trim()
-        if (!name) return { ok: false, message: '저자명을 입력해 주세요.' }
-        if (name.length > 150) return { ok: false, message: '저자명은 150자 이내로 입력해 주세요.' }
-        const authorId = maxId(state.authors, 'authorId', 700) + 1
-        set({ authors: [{ authorId, authorName: name }, ...state.authors] })
-        return { ok: true, message: `${name} 저자를 데모 목록에 추가했습니다.` }
-      },
-      renameAuthor: (authorId, authorName) => {
-        const state = get()
-        const name = authorName.trim()
-        if (!name) return { ok: false, message: '저자명을 입력해 주세요.' }
-        if (name.length > 150) return { ok: false, message: '저자명은 150자 이내로 입력해 주세요.' }
-        if (!state.authors.some((author) => author.authorId === authorId)) return { ok: false, message: '저자 정보를 찾을 수 없습니다.' }
-        set({ authors: state.authors.map((author) => author.authorId === authorId ? { ...author, authorName: name } : author) })
-        return { ok: true, message: '저자명을 수정했습니다. 연결된 도서 표시도 함께 갱신됩니다.' }
-      },
-      addMember: (values) => {
-        const state = get()
-        const loginId = values.loginId.trim()
-        const fullName = values.fullName.trim()
-        if (!loginId || !fullName) return { ok: false, message: '회원 ID와 이름을 입력해 주세요.' }
-        if (loginId.length > 50 || fullName.length > 100) return { ok: false, message: 'ID 또는 이름 길이가 스키마 제한을 넘었습니다.' }
-        if (state.users.some((user) => user.loginId.toLocaleLowerCase() === loginId.toLocaleLowerCase())) return { ok: false, message: '이미 등록된 로그인 ID입니다.' }
-        const userId = maxId(state.users, 'userId', 1000) + 1
-        set({ users: [{ userId, loginId, fullName, contact: values.contact.trim() || null, role: 'MEMBER', accountStatus: 'ACTIVE', createdAt: new Date().toISOString() }, ...state.users] })
-        return { ok: true, message: `${fullName} 회원을 데모 목록에 추가했습니다.` }
-      },
-      saveBook: (values, bookId) => {
-        const state = get()
-        const isbn = normalizeIsbn(values.isbn)
-        const title = values.title.trim()
-        const authorNames = values.authorNames.trim()
-        if (!title || !authorNames) return { ok: false, message: '도서명과 저자를 입력해 주세요.' }
-        if (!validIsbn13(isbn)) return { ok: false, message: 'ISBN-13의 숫자 13자리와 체크 숫자를 확인해 주세요.' }
-        if (state.books.some((book) => book.isbn === isbn && book.bookId !== bookId)) return { ok: false, message: '이미 등록된 ISBN입니다.' }
-        const rawYear = values.publicationYear.trim()
-        const publicationYear = rawYear ? Number(rawYear) : null
-        if (publicationYear !== null && (!Number.isInteger(publicationYear) || publicationYear < 1 || publicationYear > 9999)) {
-          return { ok: false, message: '발행연도는 1~9999의 정수로 입력해 주세요.' }
-        }
-        const { authors, authorIds } = authorIdsForNames(state, authorNames)
-        const nextBookId = bookId ?? maxId(state.books, 'bookId', 500) + 1
-        const book = {
-          bookId: nextBookId,
-          isbn,
-          title,
-          publisher: values.publisher.trim() || null,
-          publicationYear,
-          catalogStatus: state.books.find((item) => item.bookId === bookId)?.catalogStatus ?? 'ACTIVE' as const,
-        }
-        const books = bookId
-          ? state.books.map((item) => item.bookId === bookId ? book : item)
-          : [book, ...state.books]
-        const bookAuthors = [
-          ...state.bookAuthors.filter((relation) => relation.bookId !== nextBookId),
-          ...authorIds.map((authorId) => ({ bookId: nextBookId, authorId })),
-        ]
-        set({ books, authors, bookAuthors })
-        return { ok: true, message: bookId ? '도서 정보를 수정했습니다.' : '도서 정보와 저자 연결을 등록했습니다.' }
-      },
-      addCopy: (bookId, copyCode) => {
-        const state = get()
-        const code = copyCode.trim()
-        if (!state.books.some((book) => book.bookId === bookId)) return { ok: false, message: '도서 정보를 찾을 수 없습니다.' }
-        if (!code) return { ok: false, message: '소장본 관리번호를 입력해 주세요.' }
-        if (state.copies.some((copy) => copy.copyCode.toLocaleLowerCase() === code.toLocaleLowerCase())) return { ok: false, message: '이미 사용 중인 소장본 관리번호입니다.' }
-        const copyId = maxId(state.copies, 'copyId', 5000) + 1
-        set({ copies: [{ copyId, bookId, copyCode: code, managementStatus: 'ACTIVE' }, ...state.copies] })
-        return { ok: true, message: '소장본을 데모 목록에 추가했습니다.' }
-      },
-      toggleCopyStatus: (copyId) => {
-        const state = get()
-        const copy = state.copies.find((item) => item.copyId === copyId)
-        if (!copy) return { ok: false, message: '소장본 정보를 찾을 수 없습니다.' }
-        if (copy.managementStatus === 'ACTIVE' && state.loans.some((loan) => loan.copyId === copyId && loan.returnedAt === null)) {
-          return { ok: false, message: '대출 중인 소장본은 제적할 수 없습니다.' }
-        }
-        const status = copy.managementStatus === 'ACTIVE' ? 'RETIRED' : 'ACTIVE'
-        set({ copies: state.copies.map((item) => item.copyId === copyId ? { ...item, managementStatus: status } : item) })
-        return { ok: true, message: `소장본 상태를 ${status === 'ACTIVE' ? '활성' : '제적'}으로 변경했습니다.` }
-      },
-      setBookStatus: (bookId) => {
-        const state = get()
-        const book = state.books.find((item) => item.bookId === bookId)
-        if (!book) return { ok: false, message: '도서 정보를 찾을 수 없습니다.' }
-        if (book.catalogStatus === 'ACTIVE') {
-          const copyIds = new Set(state.copies.filter((copy) => copy.bookId === bookId).map((copy) => copy.copyId))
-          if (state.loans.some((loan) => loan.returnedAt === null && copyIds.has(loan.copyId))) {
-            return { ok: false, message: '대출 중인 소장본이 있어 도서를 제적할 수 없습니다.' }
-          }
-        }
-        const status = book.catalogStatus === 'ACTIVE' ? 'RETIRED' : 'ACTIVE'
-        set({ books: state.books.map((item) => item.bookId === bookId ? { ...item, catalogStatus: status } : item) })
-        return { ok: true, message: `도서 서지 상태를 ${status === 'ACTIVE' ? '활성' : '제적'}으로 변경했습니다.` }
-      },
-      resetDemo: () => set({ ...createSeedData(), demoRole: null, roleSwitchTarget: null, demoMemberId: 1001, demoLibrarianId: 2001, dbFlowEvents: [] }),
-    }),
+          {
+            operation: "SELECT",
+            tableId: "loan",
+            columnIds: ["is_cancelled", "returned_at", "current_due_date"],
+            message: `${operation}: 현재 유효 상태·권한 검사 (Mock)`,
+            status: "success",
+          },
+          {
+            operation: operation === "CHECKOUT" ? "INSERT" : "UPDATE",
+            tableId: "loan",
+            message: `${operation}: ${result.message}`,
+            status: result.ok ? "success" : "failed",
+            before: snapshot(s.loans.find((l) => l.loanId === target)),
+            after: snapshot(
+              get().loans.find((l) => l.loanId === (result.loanId ?? target)),
+            ),
+          },
+          ...(operation === "RENEW" || operation === "CORRECT"
+            ? [
+                {
+                  operation: "INSERT" as const,
+                  tableId:
+                    operation === "RENEW"
+                      ? "loan_renewal"
+                      : "loan_correction_history",
+                  relationId:
+                    operation === "RENEW"
+                      ? "loan-loan_renewal"
+                      : "loan-loan_correction_history-loan_id",
+                  message: `${operation === "RENEW" ? "연장" : "정정"} 이력 ${result.ok ? "저장" : "저장 취소"} (Mock)`,
+                  status: result.ok
+                    ? ("success" as const)
+                    : ("failed" as const),
+                },
+              ]
+            : []),
+          ...(operation === "RETURN" && result.ok
+            ? [
+                {
+                  operation: "UPDATE" as const,
+                  tableId: "app_user",
+                  columnIds: ["borrowing_suspended_until"],
+                  message: "유효한 연체 반납 기준 정지 종료시각 재계산 (Mock)",
+                  status: "success" as const,
+                },
+              ]
+            : []),
+          ...(result.ok
+            ? [
+                {
+                  operation: "INSERT" as const,
+                  tableId: "request_record",
+                  message: "비식별 요청 결과 기록 (Mock)",
+                  status: "success" as const,
+                },
+              ]
+            : []),
+          {
+            operation: result.ok ? "COMMIT" : "ROLLBACK",
+            message: result.message,
+            status: result.ok ? "success" : "failed",
+          },
+        ]);
+        return result;
+      }
+      return {
+        ...initial(),
+        requestRoleSwitch: (role, target) => {
+          const state = get(),
+            key =
+              role === "MEMBER"
+                ? "demoMemberId"
+                : role === "LIBRARIAN"
+                  ? "demoLibrarianId"
+                  : "demoAdminId";
+          const id =
+            state.users.find(
+              (u) =>
+                u.userId === state[key] &&
+                u.role === role &&
+                u.accountStatus === "ACTIVE",
+            )?.userId ??
+            state.users.find(
+              (u) => u.role === role && u.accountStatus === "ACTIVE",
+            )?.userId ??
+            0;
+          set({ demoRole: role, roleSwitchTarget: target, [key]: id });
+        },
+        completeRoleSwitch: () => set({ roleSwitchTarget: null }),
+        setDemoMember: (id) => set({ demoMemberId: id }),
+        setDemoLibrarian: (id) => set({ demoLibrarianId: id }),
+        setDemoAdmin: (id) => set({ demoAdminId: id }),
+        recordDbFlowEvents: (events) => {
+          const runId = crypto.randomUUID();
+          set((s) => ({
+            dbFlowEvents: [
+              ...s.dbFlowEvents,
+              ...events.map((e, i) => ({
+                ...e,
+                id: `${runId}-${i}`,
+                runId,
+                step: i + 1,
+                createdAt: now(),
+              })),
+            ].slice(-150),
+          }));
+        },
+        clearDbFlowEvents: () => set({ dbFlowEvents: [] }),
+        checkout: (memberId, copyId, staffId, options = {}) => {
+          if (!actor(get(), "LIBRARIAN", staffId))
+            return fail("활성 사서만 대출할 수 있습니다.");
+          const prior =
+            options.requestId &&
+            get().requests.find((r) => r.requestId === options.requestId);
+          if (
+            prior &&
+            get().loans.find((l) => l.loanId === prior.targetLoanId)
+              ?.memberUserId !== memberId
+          )
+            return fail("요청 ID 충돌: 대상 회원이 다릅니다.");
+          return transaction("CHECKOUT", null, options, { copyId }, (d) => {
+            const member = d.users.find(
+                (u) =>
+                  u.userId === memberId &&
+                  u.role === "MEMBER" &&
+                  u.accountStatus === "ACTIVE",
+              ),
+              active = d.loans.filter(isActiveLoan);
+            if (!member) return fail("활성 회원을 선택하세요.");
+            if (active.filter((l) => l.memberUserId === memberId).length >= 5)
+              return fail("회원당 최대 5권입니다. 6번째 대출은 불가합니다.");
+            if (active.some((l) => l.memberUserId === memberId && isOverdue(l)))
+              return fail("현재 연체 중이므로 신규 대출이 불가합니다.");
+            const until = suspensionUntil(memberId, d.loans);
+            if (until && until > now())
+              return fail(`신규 대출 정지 기간: ${until}`);
+            const copy = d.copies.find((c) => c.copyId === copyId);
+            if (
+              !copy ||
+              copy.managementStatus !== "ACTIVE" ||
+              active.some((l) => l.copyId === copyId)
+            )
+              return fail("정상 상태의 미대출 소장본만 대출 가능합니다.");
+            const loanId = nextId(d.loans, "loanId"),
+              due = addDays(getKoreanDate(), 14);
+            d.loans.unshift({
+              loanId,
+              memberUserId: memberId,
+              copyId,
+              checkedOutByUserId: staffId,
+              borrowedAt: now(),
+              initialDueDate: due,
+              currentDueDate: due,
+              returnedAt: null,
+              returnedByUserId: null,
+              isCancelled: false,
+              cancelledAt: null,
+            });
+            return ok(`대출 완료 · 반납예정일 ${due}`, loanId);
+          });
+        },
+        returnLoan: (loanId, staffId, options = {}) => {
+          if (!actor(get(), "LIBRARIAN", staffId))
+            return fail("활성 사서만 반납할 수 있습니다.");
+          return transaction(
+            "RETURN",
+            loanId,
+            options,
+            { damaged: !!options.damaged, reason: options.reason ?? "" },
+            (d) => {
+              const loan = d.loans.find((l) => l.loanId === loanId);
+              if (!loan || !isActiveLoan(loan))
+                return fail("유효한 미반납 대출이 아닙니다. 중복 반납 불가.");
+              loan.returnedAt = now();
+              loan.returnedByUserId = staffId;
+              if (options.damaged) {
+                if (!options.reason?.trim())
+                  return fail("파손 사유가 필요합니다.");
+                const copy = d.copies.find((c) => c.copyId === loan.copyId)!;
+                d.copyHistory.push({
+                  copyStatusHistoryId: nextId(
+                    d.copyHistory,
+                    "copyStatusHistoryId",
+                  ),
+                  copyId: copy.copyId,
+                  previousStatus: copy.managementStatus,
+                  newStatus: "DAMAGED",
+                  reason: options.reason.trim(),
+                  changedByUserId: staffId,
+                  relatedLoanId: loanId,
+                  changedAt: now(),
+                });
+                copy.managementStatus = "DAMAGED";
+              }
+              return ok("반납 완료 · 신규 대출 정지를 재계산했습니다.", loanId);
+            },
+          );
+        },
+        renewLoan: (loanId, memberId, failure = false, options = {}) => {
+          if (!actor(get(), "MEMBER", memberId))
+            return fail("활성 회원 본인만 연장할 수 있습니다.");
+          return transaction(
+            "RENEW",
+            loanId,
+            { ...options, simulateFailure: failure || options.simulateFailure },
+            {},
+            (d) => {
+              const loan = d.loans.find((l) => l.loanId === loanId);
+              if (
+                !loan ||
+                loan.memberUserId !== memberId ||
+                !canRenew(loan, d.renewals) ||
+                d.loans.some((l) => l.memberUserId === memberId && isOverdue(l))
+              )
+                return fail(
+                  "본인 대출·미반납·전체 비연체·연장 0회 조건을 확인하세요.",
+                );
+              const previous = loan.currentDueDate;
+              loan.currentDueDate = addDays(previous, 7);
+              d.renewals.push({
+                renewalId: nextId(d.renewals, "renewalId"),
+                loanId,
+                renewedAt: now(),
+                previousDueDate: previous,
+                newDueDate: loan.currentDueDate,
+              });
+              return ok(`7일 연장 완료 · ${loan.currentDueDate}`, loanId);
+            },
+          );
+        },
+        correctLoan: (loanId, input, options = {}) => {
+          if (!actor(get(), "LIBRARIAN"))
+            return fail("활성 사서만 정정할 수 있습니다.");
+          return transaction(
+            "CORRECT",
+            loanId,
+            options,
+            { ...input },
+            (d, s) => {
+              const loan = d.loans.find((l) => l.loanId === loanId);
+              if (!loan || loan.isCancelled || !input.reason.trim())
+                return fail("유효한 대출과 정정 사유가 필요합니다.");
+              const before = snapshot(loan);
+              if (input.type === "CANCEL_LOAN") {
+                if (!input.physicalConfirmed)
+                  return fail("실물 회수·미반출 확인 후 취소하세요.");
+                loan.isCancelled = true;
+                loan.cancelledAt = now();
+              } else if (input.type === "UNDO_RETURN") {
+                if (
+                  !loan.returnedAt ||
+                  !d.users.some(
+                    (u) =>
+                      u.userId === loan.memberUserId &&
+                      u.role === "MEMBER" &&
+                      u.accountStatus === "ACTIVE",
+                  )
+                )
+                  return fail(
+                    "탈퇴 회원 또는 미반납 건은 반납 취소할 수 없습니다.",
+                  );
+                if (
+                  d.loans.some(
+                    (l) =>
+                      l.loanId !== loanId &&
+                      l.copyId === loan.copyId &&
+                      !l.isCancelled &&
+                      l.borrowedAt >= loan.returnedAt!,
+                  )
+                )
+                  return fail(
+                    "반납 이후 유효한 재대출 이력이 있어 복원할 수 없습니다.",
+                  );
+                if (
+                  d.loans.filter(
+                    (l) =>
+                      l.memberUserId === loan.memberUserId && isActiveLoan(l),
+                  ).length >= 5 ||
+                  d.loans.some(
+                    (l) => l.copyId === loan.copyId && isActiveLoan(l),
+                  )
+                )
+                  return fail(
+                    "복원 시 5권 한도 또는 소장본 점유가 충돌합니다.",
+                  );
+                loan.returnedAt = null;
+                loan.returnedByUserId = null;
+              } else
+                return fail(
+                  "날짜 정정은 Wiki 세부 운영·증빙 정책 확정 전까지 제한합니다. 원본을 유지합니다.",
+                );
+              d.corrections.push({
+                correctionId: nextId(d.corrections, "correctionId"),
+                loanId,
+                correctionType: input.type,
+                beforeValues: before,
+                afterValues: snapshot(loan),
+                reason: input.reason.trim(),
+                evidenceReference: input.evidence?.trim() || null,
+                correctedByUserId: s.demoLibrarianId,
+                correctedAt: now(),
+              });
+              return ok("정정 완료 · 변경 전후 이력을 보존했습니다.", loanId);
+            },
+          );
+        },
+        setUserStatus: (id, reason = "") =>
+          commit((d, s) => {
+            if (!actor(s, "ADMIN"))
+              return fail("활성 관리자만 직원 상태를 변경할 수 있습니다.");
+            const u = d.users.find((u) => u.userId === id);
+            if (!u || u.role === "MEMBER" || u.accountStatus === "WITHDRAWN")
+              return fail("직원 계정만 상태 변경할 수 있습니다.");
+            if (!reason.trim()) return fail("상태 변경 사유를 입력하세요.");
+            if (containsPatronIdentity(reason, s.users))
+              return fail("변경 사유에 회원 개인정보를 입력할 수 없습니다.");
+            if (
+              u.role === "ADMIN" &&
+              u.accountStatus === "ACTIVE" &&
+              d.users.filter(
+                (u) => u.role === "ADMIN" && u.accountStatus === "ACTIVE",
+              ).length <= 1
+            )
+              return fail("마지막 활성 관리자는 비활성화할 수 없습니다.");
+            const previous = u.accountStatus;
+            u.accountStatus = previous === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+            d.staffHistory.push({
+              staffHistoryId: nextId(d.staffHistory, "staffHistoryId"),
+              targetStaffUserId: id,
+              actionType:
+                u.accountStatus === "ACTIVE" ? "REACTIVATE" : "DEACTIVATE",
+              previousStatus: previous,
+              newStatus: u.accountStatus,
+              roleAtCreation: null,
+              reason: reason.trim(),
+              processedByAdminUserId: s.demoAdminId,
+              processedAt: now(),
+            });
+            return ok("직원 상태와 변경 이력을 저장했습니다.");
+          }),
+        setUserRole: () => fail("생성된 계정의 역할은 변경할 수 없습니다."),
+        addMember: (v) =>
+          commit((d) => {
+            if (d.users.some((u) => u.accountStatus === "WITHDRAWN"))
+              return fail(
+                "탈퇴 전 로그인 ID 재사용 정책이 미확정이므로 이 데모에서 재가입을 제한합니다.",
+              );
+            const contact = account(d, v, "MEMBER");
+            d.users.push({
+              userId: nextId(d.users, "userId"),
+              loginId: v.loginId.trim(),
+              fullName: v.fullName.trim(),
+              contact,
+              role: "MEMBER",
+              accountStatus: "ACTIVE",
+              borrowingSuspendedUntil: null,
+              createdAt: now(),
+            });
+            return ok(
+              "회원가입 데모 완료. 실제 인증 계정은 생성하지 않습니다.",
+            );
+          }),
+        addStaff: (v) =>
+          commit((d, s) => {
+            if (!actor(s, "ADMIN") || !["LIBRARIAN", "ADMIN"].includes(v.role))
+              return fail("활성 관리자만 직원 계정을 생성할 수 있습니다.");
+            const contact = account(d, v, v.role),
+              id = nextId(d.users, "userId");
+            d.users.push({
+              userId: id,
+              loginId: v.loginId.trim(),
+              fullName: v.fullName.trim(),
+              contact,
+              role: v.role,
+              accountStatus: "ACTIVE",
+              borrowingSuspendedUntil: null,
+              createdAt: now(),
+            });
+            d.staffHistory.push({
+              staffHistoryId: nextId(d.staffHistory, "staffHistoryId"),
+              targetStaffUserId: id,
+              actionType: "CREATE",
+              previousStatus: null,
+              newStatus: "ACTIVE",
+              roleAtCreation: v.role,
+              reason: null,
+              processedByAdminUserId: s.demoAdminId,
+              processedAt: now(),
+            });
+            return ok("직원 데모 생성 완료. 초기 인증 설정은 미확정입니다.");
+          }),
+        updateProfile: (id, v) =>
+          commit((d, s) => {
+            if (!s.demoRole || !actor(s, s.demoRole, id))
+              return fail("본인 계정만 수정할 수 있습니다.");
+            const u = d.users.find((u) => u.userId === id)!;
+            u.contact = account(d, v, u.role, id);
+            u.fullName = v.fullName.trim();
+            return ok(
+              "본인 정보를 수정했습니다. 이전 개인정보는 저장하지 않습니다.",
+            );
+          }),
+        withdrawMember: (id, failure = false) => {
+          const r = commit(
+            (d, s) => {
+              if (!actor(s, "MEMBER", id))
+                return fail("활성 회원 본인만 탈퇴할 수 있습니다.");
+              if (d.loans.some((l) => l.memberUserId === id && isActiveLoan(l)))
+                return fail("미반납 도서를 모두 반납한 후 탈퇴하세요.");
+              const u = d.users.find((u) => u.userId === id)!;
+              const identity = [
+                u.fullName,
+                u.loginId,
+                u.contact,
+                String(id),
+              ].filter((value): value is string => !!value);
+              const redact = (text: string) =>
+                identity.reduce(
+                  (value, token) => value.replaceAll(token, "[개인정보 제거]"),
+                  text,
+                );
+              d.corrections.forEach((row) => {
+                row.reason = redact(row.reason);
+                row.evidenceReference = row.evidenceReference
+                  ? redact(row.evidenceReference)
+                  : null;
+              });
+              d.copyHistory.forEach((row) => {
+                row.reason = redact(row.reason);
+              });
+              d.staffHistory.forEach((row) => {
+                row.reason = row.reason ? redact(row.reason) : null;
+              });
+              u.loginId = null;
+              u.fullName = null;
+              u.contact = null;
+              u.borrowingSuspendedUntil = null;
+              u.accountStatus = "WITHDRAWN";
+              d.loans.forEach((l) => {
+                if (l.memberUserId === id) l.memberUserId = null;
+              });
+              d.requests.forEach((r) => {
+                if (r.actorUserId === id) {
+                  r.actorUserId = null;
+                  r.responseSnapshot = { ok: true };
+                }
+              });
+              return ok(
+                "탈퇴 완료 · 개인정보와 과거 대출의 회원 연결을 제거했습니다.",
+              );
+            },
+            failure,
+            { demoRole: null, demoMemberId: 0, dbFlowEvents: [] },
+          );
+          return r;
+        },
+        addAuthor: (name) =>
+          commit((d, s) => {
+            if (!actor(s, "LIBRARIAN"))
+              return fail("사서만 저자를 관리할 수 있습니다.");
+            if (!name.trim() || name.length > 150)
+              return fail("저자명은 1~150자입니다.");
+            d.authors.push({
+              authorId: nextId(d.authors, "authorId"),
+              authorName: name.trim(),
+            });
+            return ok("저자를 등록했습니다. 동명이인은 ID로 구분합니다.");
+          }),
+        renameAuthor: (id, name) =>
+          commit((d, s) => {
+            if (!actor(s, "LIBRARIAN"))
+              return fail("사서만 저자를 관리할 수 있습니다.");
+            const a = d.authors.find((a) => a.authorId === id);
+            if (!a || !name.trim() || name.length > 150)
+              return fail("저자와 이름을 확인하세요.");
+            d.books
+              .filter((b) =>
+                d.bookAuthors.some(
+                  (r) => r.bookId === b.bookId && r.authorId === id,
+                ),
+              )
+              .forEach((b) =>
+                d.bookHistory.push({
+                  bookChangeId: nextId(d.bookHistory, "bookChangeId"),
+                  bookId: b.bookId,
+                  changedByUserId: s.demoLibrarianId,
+                  changedAt: now(),
+                  beforeValues: { author_id: id, author_name: a.authorName },
+                  afterValues: { author_id: id, author_name: name.trim() },
+                }),
+              );
+            a.authorName = name.trim();
+            return ok("저자명과 연결 서지 이력을 저장했습니다.");
+          }),
+        saveBook: (v, id) =>
+          commit((d, s) => {
+            if (!actor(s, "LIBRARIAN"))
+              return fail("활성 사서만 서지정보를 관리할 수 있습니다.");
+            const isbn = normalizeIsbn(v.isbn),
+              title = v.title.trim(),
+              categoryCode = v.categoryCode.trim(),
+              year = v.publicationYear.trim()
+                ? Number(v.publicationYear)
+                : null;
+            if (!title || title.length > 255 || v.publisher.length > 150)
+              return fail("도서명(1~255자)과 출판사(150자)를 확인하세요.");
+            if (categoryCode !== "DEMO_GENERAL")
+              return fail(
+                "분류 목록은 미확정입니다. 합성 데모 분류 DEMO_GENERAL만 사용합니다.",
+              );
+            if (isbn && d.books.some((b) => b.bookId !== id && b.isbn === isbn))
+              return fail("이미 등록된 ISBN입니다.");
+            if (
+              year !== null &&
+              (!Number.isInteger(year) || year < 1 || year > 9999)
+            )
+              return fail("발행연도는 1~9999 정수입니다.");
+            if (
+              !isbn &&
+              !v.confirmSimilar &&
+              d.books.some(
+                (b) =>
+                  b.bookId !== id &&
+                  b.title.toLowerCase() === title.toLowerCase(),
+              )
+            )
+              return fail(
+                "유사 도서가 있습니다. 기존 서지를 검토하고 신규 등록 확인을 선택하세요.",
+              );
+            let ids = v.authorIds;
+            if (!ids?.length)
+              ids = [
+                ...new Set(
+                  v.authorNames
+                    .split(/[;,、]/)
+                    .map((n) => n.trim())
+                    .filter(Boolean),
+                ),
+              ].map((name) => {
+                if (name.length > 150)
+                  throw Error("저자명은 150자 이하입니다.");
+                const matches = d.authors.filter((a) => a.authorName === name);
+                if (matches.length > 1)
+                  throw Error("동명이인 저자는 ID로 선택하세요.");
+                if (matches[0]) return matches[0].authorId;
+                const authorId = nextId(d.authors, "authorId");
+                d.authors.push({ authorId, authorName: name });
+                return authorId;
+              });
+            if (
+              !ids.length ||
+              new Set(ids).size !== ids.length ||
+              ids.some((id) => !d.authors.some((a) => a.authorId === id))
+            )
+              return fail("유효한 저자를 최소 1명 연결하세요.");
+            const old = d.books.find((b) => b.bookId === id);
+            if (id && !old) return fail("도서를 찾을 수 없습니다.");
+            const book = {
+              bookId: id ?? nextId(d.books, "bookId"),
+              isbn,
+              title,
+              publisher: v.publisher.trim() || null,
+              publicationYear: year,
+              categoryCode,
+            };
+            if (old)
+              d.bookHistory.push({
+                bookChangeId: nextId(d.bookHistory, "bookChangeId"),
+                bookId: book.bookId,
+                changedByUserId: s.demoLibrarianId,
+                changedAt: now(),
+                beforeValues: {
+                  ...old,
+                  author_ids: d.bookAuthors
+                    .filter((r) => r.bookId === id)
+                    .map((r) => r.authorId),
+                },
+                afterValues: { ...book, author_ids: ids },
+              });
+            d.books = old
+              ? d.books.map((b) => (b.bookId === id ? book : b))
+              : [...d.books, book];
+            d.bookAuthors = [
+              ...d.bookAuthors.filter((r) => r.bookId !== book.bookId),
+              ...ids.map((authorId) => ({ bookId: book.bookId, authorId })),
+            ];
+            return ok("서지정보와 저자 연결을 저장했습니다.");
+          }),
+        addCopy: (bookId) =>
+          commit((d, s) => {
+            if (!actor(s, "LIBRARIAN"))
+              return fail("사서만 소장본을 등록할 수 있습니다.");
+            if (!d.books.some((b) => b.bookId === bookId))
+              return fail("도서를 찾을 수 없습니다.");
+            const copyId = nextId(d.copies, "copyId");
+            let serial = copyId;
+            while (d.copies.some((c) => c.copyCode === `CD-${serial}`))
+              serial++;
+            d.copies.push({
+              copyId,
+              bookId,
+              copyCode: `CD-${serial}`,
+              managementStatus: "ACTIVE",
+            });
+            return ok(`소장본 등록 완료 · CD-${serial}`);
+          }),
+        changeCopyStatus: (id, status, reason, failure = false) =>
+          commit((d, s) => {
+            if (!actor(s, "LIBRARIAN"))
+              return fail("사서만 소장본 상태를 변경할 수 있습니다.");
+            const c = d.copies.find((c) => c.copyId === id);
+            if (
+              !c ||
+              !["ACTIVE", "DAMAGED", "RETIRED"].includes(status) ||
+              c.managementStatus === "RETIRED" ||
+              c.managementStatus === status
+            )
+              return fail("제적 복원 또는 같은 상태 변경은 불가합니다.");
+            if (!reason.trim()) return fail("상태 변경 사유가 필요합니다.");
+            if (containsPatronIdentity(reason, s.users))
+              return fail("변경 사유에 회원 개인정보를 입력할 수 없습니다.");
+            if (
+              status !== "DAMAGED" &&
+              d.loans.some((l) => l.copyId === id && isActiveLoan(l))
+            )
+              return fail("미반납 소장본은 수리 완료·제적할 수 없습니다.");
+            d.copyHistory.push({
+              copyStatusHistoryId: nextId(d.copyHistory, "copyStatusHistoryId"),
+              copyId: id,
+              previousStatus: c.managementStatus,
+              newStatus: status,
+              reason: reason.trim(),
+              changedByUserId: s.demoLibrarianId,
+              relatedLoanId: null,
+              changedAt: now(),
+            });
+            c.managementStatus = status;
+            return ok("소장본 상태와 이력을 저장했습니다.");
+          }, failure),
+        toggleCopyStatus: () =>
+          fail("상태와 사유를 지정하세요. 제적 복원은 불가합니다."),
+        setBookStatus: () =>
+          fail(
+            "서지정보 자체는 제적하지 않습니다. 개별 소장본 상태를 관리하세요.",
+          ),
+        resetDemo: () => set(initial()),
+      };
+    },
     {
-      name: 'chaekdam-demo-state-v1',
-      version: 1,
-      partialize: (state) => ({
-        users: state.users,
-        books: state.books,
-        authors: state.authors,
-        bookAuthors: state.bookAuthors,
-        copies: state.copies,
-        loans: state.loans,
-        renewals: state.renewals,
-        demoRole: state.demoRole,
-        demoMemberId: state.demoMemberId,
-        demoLibrarianId: state.demoLibrarianId,
-        dbFlowEvents: state.dbFlowEvents,
+      name: "chaekdam-demo-state-v1",
+      version: 2,
+      storage: createJSONStorage(() => safeStorage),
+      partialize: (s) => ({
+        ...dataOf(s),
+        demoRole: s.demoRole,
+        demoMemberId: s.demoMemberId,
+        demoLibrarianId: s.demoLibrarianId,
+        demoAdminId: s.demoAdminId,
       }),
     },
   ),
-)
+);

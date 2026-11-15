@@ -1,58 +1,21 @@
-# Product
-
-<!-- impeccable:product-schema 1 -->
+﻿# Product
 
 ## Platform
 
 web
 
-## Users
+## Purpose and users
 
-- Members search the catalog, inspect copy availability, review loan history, and renew their own eligible loan.
-- Librarians verify a member and a physical copy before recording checkout or return work.
-- Administrators maintain users and catalog data, review aggregate activity, and explore the schema.
-- Students and reviewers use the same application as a role-based library administration demo.
+책담 V2 demonstrates library workflows against the latest Wiki's twelve-table relational model. Members search and renew their own loans and manage their own account. Librarians maintain catalog/copies and process checkout, return and corrections. Administrators manage staff accounts and inspect nonidentifying aggregate statistics and schema metadata.
 
-## Product Purpose
+## Product truth
 
-Show how everyday library work maps to a relational data model. Success means users can complete the mock member, librarian, and administrator workflows and inspect the tables, columns, foreign keys, and simulated database events involved.
+The source is Wiki commit 9e698003329b281ef36efea19fe48e2f0c0eaa8e, not the legacy seven-table database/schema.sql. Policies include five active loans per member, one active loan per copy, KST fourteen-day checkout and one seven-day renewal. Cancelled loans do not occupy copies or count toward limits. Current overdue and post-return suspension are separate restrictions.
 
-## Positioning
+## Boundaries
 
-The DB Flow Inspector links a selected workflow step to the real schema relationships and explains its SELECT, INSERT, UPDATE, COMMIT, or ROLLBACK event. It is an educational simulation and never claims to execute SQL or move data through PostgreSQL.
+All data is synthetic and shared in a browser-only versioned Zustand Mock store. Role selection is a demonstration, not authentication. No API, backend, actual SQL, PostgreSQL transaction or production security is implemented. DB Flow clearly labels simulated operations and SQL examples. Unknown policies use documented safe restrictions; see docs/V2-IMPLEMENTATION.md.
 
-## Operating Context
+## Design and accessibility
 
-The app is a browser-only demo backed by one shared mock data store. Users choose a role without a password. Librarians handle in-person checkouts; members do not create checkout requests or loan records themselves. Administrators can inspect a read-only schema catalog.
-
-## Capabilities and Constraints
-
-- The physical model is the seven-table PostgreSQL schema in `../database/schema.sql`; the repository Wiki defines BR-01–16 and FR-01–16.
-- Loan periods are 14 days, one active loan per member and copy, and one non-overdue renewal of seven days.
-- A return preserves the loan and records both return fields. Copy availability is derived from active loan rows, not `book_copy.management_status`.
-- Renewal changes the loan due date and adds its history together in mock state. The failure demonstration restores both values.
-- Role selection and route guards are frontend demo behavior, not authentication or security.
-- No API, backend, PostgreSQL connection, authentication server, Docker change, SQL execution, or real transaction is part of this stage.
-
-## Brand Commitments
-
-The existing product name is 책담. The user brief requires an administrative, restrained interface using white, neutral gray, and deep navy, with green, blue, orange, and red reserved for database operation meaning.
-
-## Evidence on Hand
-
-- `../database/schema.sql` is the physical schema source of truth.
-- Mock records in `src/data/mock/seed.ts` are synthetic demo data.
-- Existing React screens, assets, and `DESIGN.md` define the incumbent UI and reusable components.
-- No production API, real patron data, or live database is connected.
-
-## Product Principles
-
-- Keep business actions and their database effects understandable together.
-- Preserve historical records and derive availability and overdue status from loan data.
-- Share one consistent mock state across member, librarian, and administrator screens.
-- Make demo behavior and access limits explicit.
-- Support keyboard use, compact layouts, and reduced motion.
-
-## Accessibility & Inclusion
-
-Keyboard navigation and visible focus are required. The inspector must adapt to narrow screens and replace moving animation with static step highlighting when reduced motion is preferred.
+Preserve the established white/neutral/navy identity and navigation. Apply OpenDesign Cloud layout and token references to functioning React surfaces. Prioritize readable tables, correct relational information, clear errors, keyboard operation, responsive layouts and reduced motion. Never expose password hashes or patron identity through DB Console or audit snapshots.
