@@ -1,0 +1,28 @@
+[project]
+name = "library-backend"
+version = "0.1.0"
+description = "Library Management System API"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi[standard]>=0.115.0",
+    "sqlalchemy>=2.0.35",
+    "psycopg[binary]>=3.2.0",
+    "alembic>=1.13.3",
+    "pydantic-settings>=2.5.2",
+    "pyjwt>=2.9.0",
+    "pwdlib[bcrypt]>=0.2.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.6.9",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
