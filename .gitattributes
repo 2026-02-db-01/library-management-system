@@ -1,0 +1,4 @@
+# 리눅스 컨테이너에서 실행되는 스크립트는 LF 고정 (CRLF면 initdb 셸 스크립트가 깨진다)
+*.sh  text eol=lf
+*.sql text eol=lf
+*.yml text eol=lf
