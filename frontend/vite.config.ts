@@ -1,11 +1,15 @@
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
-
-// https://vite.dev/config/
-const githubPages = process.env.VITE_GITHUB_PAGES === 'true'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  base: githubPages ? '/library-management-system/' : '/',
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+    },
+  },
 })

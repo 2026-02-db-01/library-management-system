@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import {
   BrowserRouter,
   HashRouter,
@@ -154,6 +154,21 @@ const SiteRouter = import.meta.env.VITE_GITHUB_PAGES === 'true' ? HashRouter : B
 
 function App() {
   const role = useLibraryStore((state) => state.demoRole);
+  const isInitialized = useLibraryStore((state) => state.isInitialized);
+  const initialize = useLibraryStore((state) => state.initialize);
+
+  useEffect(() => {
+    void initialize();
+  }, [initialize]);
+
+  if (!isInitialized) {
+    return (
+      <div className="route-loading" role="status">
+        도서관 데이터를 불러오는 중…
+      </div>
+    );
+  }
+
   return (
     <SiteRouter>
       <Suspense

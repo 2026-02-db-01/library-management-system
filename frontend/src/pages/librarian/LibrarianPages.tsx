@@ -129,10 +129,10 @@ export function LibrarianDashboardPage() {
       <PageHeading
         eyebrow="LIBRARY DESK · OVERVIEW"
         title="사서 업무 현황"
-        description="현재 대출과 반납 예정, 연체 상태를 공유 데모 데이터에서 계산합니다."
+        description="현재 대출과 반납 예정, 연체 상태를 공유 DB 데이터에서 계산합니다."
         actions={
           <Badge tone="blue">
-            DEMO LIBRARIAN ·{" "}
+            LIBRARIAN ·{" "}
             {data.users.find((user) => user.userId === data.demoLibrarianId)
               ?.fullName ?? "선택 필요"}
           </Badge>
@@ -220,7 +220,7 @@ export function LibrarianDashboardPage() {
         <Card className="panel-card recent-activity-card">
           <SectionHeading
             title="최근 대출·반납"
-            description="동일한 Mock State에서 산출한 최근 기록"
+            description="PostgreSQL DB에서 산출한 최근 기록"
           />
           <div className="activity-list">
             {recentEvents.map((event) => (
@@ -293,51 +293,72 @@ export function LibrarianCheckoutPage() {
   const data = useLibraryData();
   const checkout = useLibraryStore((state) => state.checkout);
   const [memberQuery, setMemberQuery] = useState("");
-  const [memberId, setMemberId] = useState(1003);
-  const [bookId, setBookId] = useState(502);
-  const [copyId, setCopyId] = useState(5003);
+  const [memberId, setMemberId] = useState(0);
+  const [bookId, setBookId] = useState(0);
+  const [copyId, setCopyId] = useState(0);
+  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ActionResult | null>(null);
+
   const members = data.users.filter(
     (user) =>
       user.role === "MEMBER" &&
-      `${user.fullName} ${user.loginId} ${user.userId}`
+      user.accountStatus !== "WITHDRAWN" &&
+      `${user.fullName ?? ""} ${user.loginId ?? ""} ${user.userId}`
         .toLocaleLowerCase()
         .includes(memberQuery.trim().toLocaleLowerCase()),
   );
+
+  const activeMemberId = members.some((member) => member.userId === memberId)
+    ? memberId
+    : (members[0]?.userId ?? 0);
+
+  const defaultBook =
+    data.books.find((book) => getAvailableCopies(book.bookId, data).length > 0) ??
+    data.books[0];
+
+  const activeBookId = data.books.some((book) => book.bookId === bookId)
+    ? bookId
+    : (defaultBook?.bookId ?? 0);
+
   const selectedMember = data.users.find(
-    (user) => user.userId === memberId && user.role === "MEMBER",
+    (user) => user.userId === activeMemberId && user.role === "MEMBER",
   );
   const demoLibrarian = data.users.find(
     (user) => user.userId === data.demoLibrarianId,
   );
-  const selectedBook = data.books.find((book) => book.bookId === bookId);
+  const selectedBook = data.books.find((book) => book.bookId === activeBookId);
   const availableCopies = selectedBook
     ? getAvailableCopies(selectedBook.bookId, data)
     : [];
+
+  const activeCopyId = availableCopies.some((copy) => copy.copyId === copyId)
+    ? copyId
+    : (availableCopies[0]?.copyId ?? 0);
+
   const activeLoans = data.loans.filter(
     (loan) => !loan.isCancelled && loan.returnedAt === null,
   );
-  const memberLoan = activeLoans.find((loan) => loan.memberUserId === memberId);
+  const memberLoan = activeLoans.find(
+    (loan) => loan.memberUserId === activeMemberId,
+  );
   const memberOverdue = activeLoans.some(
-    (loan) => loan.memberUserId === memberId && isOverdue(loan),
+    (loan) => loan.memberUserId === activeMemberId && isOverdue(loan),
   );
   const memberCount = activeLoans.filter(
-    (l) => l.memberUserId === memberId,
+    (l) => l.memberUserId === activeMemberId,
   ).length;
   const memberSuspended =
     !!selectedMember?.borrowingSuspendedUntil &&
     selectedMember.borrowingSuspendedUntil > new Date().toISOString();
   const canCheckout =
+    !busy &&
     !memberOverdue &&
     !memberSuspended &&
     selectedMember !== undefined &&
     selectedMember.accountStatus === "ACTIVE" &&
-    data.loans.filter(
-      (l) =>
-        l.memberUserId === memberId && !l.isCancelled && l.returnedAt === null,
-    ).length < 5 &&
+    memberCount < 5 &&
     selectedBook !== undefined &&
-    availableCopies.some((copy) => copy.copyId === copyId);
+    availableCopies.some((copy) => copy.copyId === activeCopyId);
 
   function onBookChange(value: number) {
     setBookId(value);
@@ -348,17 +369,27 @@ export function LibrarianCheckoutPage() {
     setResult(null);
   }
 
-  function handleCheckout() {
-    const outcome = checkout(memberId, copyId, data.demoLibrarianId);
-    if (outcome.ok) {
-      const nextBook = data.books.find(
-        (book) =>
-          book.bookId !== bookId &&
-          getAvailableCopies(book.bookId, data).length > 0,
+  async function handleCheckout() {
+    if (!canCheckout) return;
+    setBusy(true);
+    try {
+      const outcome = await checkout(
+        activeMemberId,
+        activeCopyId,
+        data.demoLibrarianId,
       );
-      if (nextBook) onBookChange(nextBook.bookId);
+      if (outcome.ok) {
+        const nextBook = data.books.find(
+          (book) =>
+            book.bookId !== activeBookId &&
+            getAvailableCopies(book.bookId, data).length > 0,
+        );
+        if (nextBook) onBookChange(nextBook.bookId);
+      }
+      setResult(outcome);
+    } finally {
+      setBusy(false);
     }
-    setResult(outcome);
   }
 
   return (
@@ -366,7 +397,7 @@ export function LibrarianCheckoutPage() {
       <PageHeading
         eyebrow="LIBRARY DESK · CHECKOUT"
         title="도서 대출"
-        description="회원의 대출 가능 상태와 실물 소장본을 확인한 뒤 데모 대출을 처리합니다."
+        description="회원의 대출 가능 상태와 실물 소장본을 확인한 뒤 대출을 처리합니다."
         actions={<Badge tone="blue">14일 대출</Badge>}
       />
       <div className="checkout-layout">
@@ -389,7 +420,7 @@ export function LibrarianCheckoutPage() {
           </Field>
           <Field label="대출 회원">
             <select
-              value={memberId}
+              value={activeMemberId}
               onChange={(event) => {
                 setMemberId(Number(event.target.value));
                 setResult(null);
@@ -451,7 +482,7 @@ export function LibrarianCheckoutPage() {
           </div>
           <Field label="도서">
             <select
-              value={bookId}
+              value={activeBookId}
               onChange={(event) => onBookChange(Number(event.target.value))}
             >
               {data.books.map((book) => {
@@ -470,7 +501,7 @@ export function LibrarianCheckoutPage() {
           </Field>
           <Field label="실물 소장본">
             <select
-              value={copyId}
+              value={activeCopyId}
               onChange={(event) => setCopyId(Number(event.target.value))}
               disabled={availableCopies.length === 0}
             >
@@ -512,7 +543,7 @@ export function LibrarianCheckoutPage() {
             </li>
             <li
               className={
-                availableCopies.some((copy) => copy.copyId === copyId)
+                availableCopies.some((copy) => copy.copyId === activeCopyId)
                   ? "check-ok"
                   : ""
               }
@@ -529,11 +560,10 @@ export function LibrarianCheckoutPage() {
             onClick={handleCheckout}
             icon={<BookOpenCheck size={16} />}
           >
-            대출 처리
+            {busy ? "처리 중…" : "대출 처리"}
           </Button>
           <p className="muted-small">
-            대출 처리 사서: {demoLibrarian?.fullName ?? "선택 없음"} · 데모
-            상태만 변경
+            대출 처리 사서: {demoLibrarian?.fullName ?? "선택 없음"} · PostgreSQL DB 반영
           </p>
         </Card>
       </div>
@@ -548,6 +578,7 @@ export function LibrarianCheckoutPage() {
 export function LibrarianReturnsPage() {
   const [damaged, setDamaged] = useState(false);
   const [damageReason, setDamageReason] = useState("");
+  const [busyLoanId, setBusyLoanId] = useState<number | null>(null);
   const data = useLibraryData();
   const returnLoan = useLibraryStore((state) => state.returnLoan);
   const [result, setResult] = useState<ActionResult | null>(null);
@@ -555,13 +586,18 @@ export function LibrarianReturnsPage() {
     .filter((loan) => !loan.isCancelled && loan.returnedAt === null)
     .sort((a, b) => a.currentDueDate.localeCompare(b.currentDueDate));
 
-  function handleReturn(loanId: number) {
-    setResult(
-      returnLoan(loanId, data.demoLibrarianId, {
+  async function handleReturn(loanId: number) {
+    if (busyLoanId !== null) return;
+    setBusyLoanId(loanId);
+    try {
+      const outcome = await returnLoan(loanId, data.demoLibrarianId, {
         damaged,
         reason: damageReason,
-      }),
-    );
+      });
+      setResult(outcome);
+    } finally {
+      setBusyLoanId(null);
+    }
   }
 
   return (
@@ -594,7 +630,7 @@ export function LibrarianReturnsPage() {
         <div className="table-card-heading">
           <SectionHeading
             title="활성 대출 목록"
-            description={`미반납 대출 ${activeLoans.length}건 · 반납 완료 시 데모 대출 기록이 갱신됩니다.`}
+            description={`미반납 대출 ${activeLoans.length}건 · 반납 완료 시 DB 대출 기록이 갱신됩니다.`}
           />
           <Badge tone="blue">RETURN WORKLIST</Badge>
         </div>
@@ -649,10 +685,11 @@ export function LibrarianReturnsPage() {
               render: (loan) => (
                 <Button
                   variant="secondary"
+                  disabled={busyLoanId === loan.loanId}
                   onClick={() => handleReturn(loan.loanId)}
                   icon={<RotateCcw size={14} />}
                 >
-                  반납 처리
+                  {busyLoanId === loan.loanId ? "처리 중…" : "반납 처리"}
                 </Button>
               ),
             },
@@ -811,7 +848,7 @@ export function LibrarianRenewalsPage() {
       </Card>
       <Notice tone="warning" title="연장 업무 규칙">
         최대 1회, 기존 `current_due_date`에 7일 추가, 연체 상태에서는 연장할 수
-        없습니다. 데모 처리 결과는 화면 상태에만 저장됩니다.
+        없습니다.
       </Notice>
     </WorkspaceLayout>
   );

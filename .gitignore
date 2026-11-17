@@ -1,16 +1,17 @@
-﻿# Python & 가상환경
+# Python / Backend
 .venv/
+venv/
 __pycache__/
 *.py[cod]
-*.egg-info/
-
-# 환경 변수 (실제 비밀번호 및 시크릿 키 보호)
-.env
-
-# 테스트 및 린터 캐시
 .pytest_cache/
-.ruff_cache/
 
-# OS 및 에디터 임시 파일
+# Node / Frontend
+node_modules/
+dist/
+
+# Environment & OS
+.env
+.env.*
 .DS_Store
 Thumbs.db
+*.egg-info/

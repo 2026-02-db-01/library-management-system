@@ -1,53 +1,78 @@
-import math
-from typing import Generic, TypeVar
+from datetime import date, datetime
+from typing import Any, Literal
 
-from fastapi import Query
-from pydantic import BaseModel, Field
+from pydantic import Field
 
-T = TypeVar("T")
-
-
-class PaginationParams:
-    """목록 조회 API에서 공통으로 사용하는 페이지네이션 쿼리 파라미터 의존성"""
-
-    def __init__(
-        self,
-        page: int = Query(1, ge=1, description="조회할 페이지 번호 (1부터 시작)"),
-        size: int = Query(20, ge=1, le=100, description="페이지당 항목 수 (최대 100)"),
-    ) -> None:
-        self.page = page
-        self.size = size
-
-    @property
-    def offset(self) -> int:
-        return (self.page - 1) * self.size
-
-    @property
-    def limit(self) -> int:
-        return self.size
+from src.core.schemas import CamelModel
 
 
-class PaginatedResponse(BaseModel, Generic[T]):
-    """모든 다건 목록 조회 API의 표준 응답 래퍼"""
+class DbFlowEventResponse(CamelModel):
+    id: str
+    run_id: str
+    step: int
+    created_at: datetime
+    operation: Literal["SELECT", "INSERT", "UPDATE", "COMMIT", "ROLLBACK"]
+    table_id: str | None = None
+    column_ids: list[str] | None = None
+    relation_id: str | None = None
+    message: str
+    status: Literal["pending", "active", "success", "failed"]
+    before: Any = None
+    after: Any = None
 
-    items: list[T] = Field(description="현재 페이지의 데이터 목록")
-    total: int = Field(description="전체 데이터 개수")
-    page: int = Field(description="현재 페이지 번호")
-    size: int = Field(description="페이지당 항목 수")
-    total_pages: int = Field(description="전체 페이지 수")
 
-    @classmethod
-    def create(
-        cls,
-        items: list[T],
-        total: int,
-        params: PaginationParams,
-    ) -> "PaginatedResponse[T]":
-        total_pages = math.ceil(total / params.size) if total > 0 else 0
-        return cls(
-            items=items,
-            total=total,
-            page=params.page,
-            size=params.size,
-            total_pages=total_pages,
-        )
+class LoanActionResponse(CamelModel):
+    ok: bool
+    message: str
+    loan_id: int | None = None
+    db_flow_events: list[DbFlowEventResponse] = Field(default_factory=list)
+
+
+class CheckoutRequest(CamelModel):
+    member_user_id: int
+    copy_id: int
+    request_id: str | None = None
+
+
+class ReturnLoanRequest(CamelModel):
+    damaged: bool = False
+    reason: str = ""
+    request_id: str | None = None
+
+
+class RenewLoanRequest(CamelModel):
+    request_id: str | None = None
+
+
+class CorrectLoanRequest(CamelModel):
+    type: Literal[
+        "CANCEL_LOAN",
+        "UNDO_RETURN",
+        "CORRECT_DUE_DATE",
+        "CORRECT_RETURNED_AT",
+    ]
+    reason: str = Field(min_length=1)
+    evidence: str | None = None
+    value: str | None = None
+    physical_confirmed: bool = False
+    request_id: str | None = None
+
+
+class LoanItemResponse(CamelModel):
+    loan_id: int
+    member_user_id: int | None
+    copy_id: int
+    copy_code: str
+    book_id: int
+    book_title: str
+    checked_out_by_user_id: int
+    borrowed_at: datetime
+    initial_due_date: date
+    current_due_date: date
+    returned_at: datetime | None
+    returned_by_user_id: int | None
+    is_cancelled: bool
+    cancelled_at: datetime | None
+    renewal_count: int
+    is_overdue: bool
+    overdue_days: int
