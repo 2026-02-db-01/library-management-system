@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import {
   BrowserRouter,
+  HashRouter,
   Navigate,
   Route,
   Routes,
@@ -149,10 +150,12 @@ function RoleRoute({
   return children;
 }
 
+const SiteRouter = import.meta.env.VITE_GITHUB_PAGES === 'true' ? HashRouter : BrowserRouter;
+
 function App() {
   const role = useLibraryStore((state) => state.demoRole);
   return (
-    <BrowserRouter>
+    <SiteRouter>
       <Suspense
         fallback={
           <div className="route-loading" role="status">
@@ -391,7 +394,7 @@ function App() {
           </Route>
         </Routes>
       </Suspense>
-    </BrowserRouter>
+    </SiteRouter>
   );
 }
 
