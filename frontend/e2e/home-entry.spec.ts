@@ -60,13 +60,43 @@ test("mobile menu opens an accordion and login does not succeed without a server
   await expect(nav).not.toBeVisible();
   await page.getByLabel("로그인 ID").fill("reader"); await page.getByLabel("비밀번호", { exact: true }).fill("secret");
   await page.getByRole("button", { name: "로그인", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("인증 서버가 연결되지 않았습니다");
+  await expect(page.getByRole("alert")).toContainText("아이디 또는 비밀번호가 올바르지 않습니다");
 });
 
-test("login shortcuts enter the selected mock role", async ({ page }) => {
-  for (const [label, path] of [["유저", "/user/books"], ["사서", "/librarian"], ["관리자", "/admin"]] as const) {
+test("mock login enters each role and restores it after reload", async ({ page }) => {
+  for (const [id, password, path] of [["user", "유저", "/user/books"], ["사서", "librarian", "/librarian"], ["admin", "관리자", "/admin"]] as const) {
     await page.goto("/login");
-    await page.getByRole("button", { name: label, exact: true }).click();
+    await page.getByLabel("로그인 ID").fill(id);
+    await page.getByLabel("비밀번호", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "로그인", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${path}$`));
+    await page.reload();
+    await expect(page).toHaveURL(new RegExp(`${path}$`));
+    await page.getByRole("button", { name: "로그아웃" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await page.goto(path);
+    await expect(page).toHaveURL(/\/$/);
   }
+});
+
+test("home login is tab scoped and stores no credentials", async ({ page, context }) => {
+  await page.goto("/");
+  await page.getByLabel("로그인 ID").fill("user");
+  await page.getByLabel("비밀번호", { exact: true }).fill("user");
+  await page.getByRole("button", { name: "로그인", exact: true }).click();
+  await expect(page).toHaveURL(/\/user\/books$/);
+  const saved = await page.evaluate(() => ({ role: sessionStorage.getItem("chaekdam-mock-session"), local: localStorage.getItem("chaekdam-demo-state-v1") ?? "" }));
+  expect(saved.role).toBe("MEMBER");
+  const persisted = JSON.parse(saved.local).state;
+  expect(persisted).not.toHaveProperty("demoRole");
+  expect(saved.local).not.toContain('"password"');
+  const other = await context.newPage();
+  await other.goto("/user/books");
+  await expect(other).toHaveURL(/\/$/);
+  await other.close();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "메뉴 열기" }).click();
+  await page.locator(".mobile-nav").getByRole("button", { name: "로그아웃" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  expect(await page.evaluate(() => sessionStorage.getItem("chaekdam-mock-session"))).toBeNull();
 });

@@ -1,11 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { unavailableAuth } from "../api/auth-contract";
+import { authenticateMock, mockAuthEnabled } from "../api/mock-auth";
 import { validateAuth, type AuthValues as Values } from "../api/auth-validation";
 import { Button, Card, PageHeading } from "../components/ui/Primitives";
 import { useLibraryStore } from "../store/libraryStore";
-import type { UserRole } from "../types/domain";
-import "./auth-shortcuts.css";
 
 const empty: Values = { loginId: "", password: "", confirm: "", fullName: "", contact: "" };
 
@@ -16,11 +15,8 @@ export function AuthForm({ signup }: { signup: boolean }) {
   const [busy, setBusy] = useState(false);
   const [visible, setVisible] = useState(false);
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const requestRoleSwitch = useLibraryStore((state) => state.requestRoleSwitch);
-  function enterMock(role: UserRole, path: string) {
-    requestRoleSwitch(role, path);
-    navigate(path);
-  }
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
@@ -32,7 +28,15 @@ export function AuthForm({ signup }: { signup: boolean }) {
         await unavailableAuth.signup({ loginId: values.loginId.trim(), password: values.password, fullName: values.fullName.trim(), contact: values.contact.replace(/\D/g, "") });
         setValues(empty); navigate("/login", { replace: true });
       } else {
-        await unavailableAuth.login({ loginId: values.loginId.trim(), password: values.password });
+        const account = authenticateMock(values.loginId, values.password);
+        const activeUser = useLibraryStore.getState().users.some((user) => user.role === account.role && user.accountStatus === "ACTIVE");
+        if (!activeUser) throw new Error("이 역할의 활성 목업 계정이 없습니다. 목업 데이터를 확인해 주세요.");
+        const requested = params.get("next");
+        const allowedPrefix = account.role === "MEMBER" ? "/user/" : account.role === "LIBRARIAN" ? "/librarian" : "/admin";
+        const destination = requested && (requested === "/account" || requested === allowedPrefix || requested.startsWith(allowedPrefix + (allowedPrefix.endsWith("/") ? "" : "/")) || requested.startsWith(allowedPrefix + "?")) && !requested.startsWith("//") ? requested : account.path;
+        requestRoleSwitch(account.role, destination.split("?")[0]);
+        setValues(empty);
+        navigate(destination);
       }
     } catch (error) { setMessage(error instanceof Error ? error.message : "요청을 처리하지 못했습니다."); }
     finally { setBusy(false); }
@@ -54,9 +58,9 @@ export function AuthForm({ signup }: { signup: boolean }) {
     </form>
     <p>{signup ? <Link to="/login">이미 계정이 있나요? 로그인</Link> : <Link to="/signup">계정이 없나요? 회원가입</Link>}</p>
     {signup && <p><Link to="/signup/demo">회원가입 목업 체험하기</Link> · 실제 계정은 생성되지 않습니다.</p>}
-    {!signup && <div className="mock-shortcuts" aria-label="목업 역할 바로가기"><p>로그인 없이 목업 화면 살펴보기</p><div><button type="button" onClick={() => enterMock("MEMBER", "/user/books")}>유저</button><button type="button" onClick={() => enterMock("LIBRARIAN", "/librarian")}>사서</button><button type="button" onClick={() => enterMock("ADMIN", "/admin")}>관리자</button></div><small>실제 로그인이 아닌 역할별 화면 시연입니다.</small></div>}
+    {!signup && <p className="mock-login-note">{mockAuthEnabled() ? "고정 테스트 계정을 사용하는 목업 로그인입니다. 실제 인증 서버에 연결되지 않습니다." : "실제 인증 서버가 연결되지 않았습니다."}</p>}
   </>;
 }
-function AuthPage({ signup }: { signup: boolean }) { const [params] = useSearchParams(); return <main className="signup-page"><PageHeading title={signup ? "회원가입" : "로그인"} description={params.has("next") ? "요청하신 서비스는 로그인 후 이용할 수 있습니다. 인증 서버 연결 준비 중이며 요청한 검색 조건은 주소에 보존됩니다." : "인증 서버 연결 준비 중입니다. 실제 계정은 서버 연결 후 이용할 수 있습니다."} /><Card><AuthForm signup={signup} /></Card></main>; }
+function AuthPage({ signup }: { signup: boolean }) { const [params] = useSearchParams(); return <main className="signup-page"><PageHeading title={signup ? "회원가입" : "로그인"} description={signup ? "실제 회원가입 서버는 연결되지 않았습니다." : params.has("next") ? "요청하신 서비스는 목업 로그인 후 이용할 수 있습니다." : "고정 테스트 계정으로 목업을 이용합니다. 실제 인증 서버는 연결되지 않았습니다."} /><Card><AuthForm signup={signup} /></Card></main>; }
 export function LoginPage() { return <AuthPage signup={false} />; }
 export function SignupPage() { return <AuthPage signup />; }

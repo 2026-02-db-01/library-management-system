@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { addDays, createSeedData, getKoreanDate } from "../data/mock/seed";
+import { readMockSession, writeMockSession } from "../api/mock-auth";
 import {
   canRenew,
   isActiveLoan,
@@ -1029,11 +1030,15 @@ export const useLibraryStore = create<LibraryStore>()(
       storage: createJSONStorage(() => safeStorage),
       partialize: (s) => ({
         ...dataOf(s),
-        demoRole: s.demoRole,
         demoMemberId: s.demoMemberId,
         demoLibrarianId: s.demoLibrarianId,
         demoAdminId: s.demoAdminId,
       }),
+      merge: (persisted, current) => ({ ...current, ...(persisted as Partial<LibraryStore>), demoRole: readMockSession(), roleSwitchTarget: null }),
     },
   ),
 );
+
+useLibraryStore.subscribe((state, previous) => {
+  if (state.demoRole !== previous.demoRole) writeMockSession(state.demoRole);
+});

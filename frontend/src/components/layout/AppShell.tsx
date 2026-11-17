@@ -129,6 +129,12 @@ export function AppShell() {
     window.setTimeout(() => setNotice(""), 3500);
   }
 
+  function logout() {
+    useLibraryStore.setState({ demoRole: null, roleSwitchTarget: null, dbFlowEvents: [] });
+    setMobileMenuOpen(false);
+    navigate("/");
+  }
+
   function onResizePointerDown(event: PointerEvent<HTMLDivElement>) {
     dragPointerId.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -192,14 +198,7 @@ export function AppShell() {
             {demoRole && (
               <button
                 className="header-reset"
-                onClick={() => {
-                  useLibraryStore.setState({
-                    demoRole: null,
-                    roleSwitchTarget: null,
-                    dbFlowEvents: [],
-                  });
-                  navigate("/");
-                }}
+                onClick={logout}
               >
                 로그아웃
               </button>
@@ -242,7 +241,7 @@ export function AppShell() {
             </button>
           </div>
         </div>
-        {mobileMenuOpen && <div className="mobile-nav"><LibraryNav role={demoRole} mobile onNavigate={() => setMobileMenuOpen(false)} /><Link to="/login" onClick={() => setMobileMenuOpen(false)}>로그인</Link><Link to="/signup" onClick={() => setMobileMenuOpen(false)}>회원가입</Link><button onClick={handleReset}>데이터 초기화</button></div>}
+        {mobileMenuOpen && <div className="mobile-nav"><LibraryNav role={demoRole} mobile onNavigate={() => setMobileMenuOpen(false)} />{demoRole ? <button onClick={logout}>로그아웃</button> : <><Link to="/login" onClick={() => setMobileMenuOpen(false)}>로그인</Link><Link to="/signup" onClick={() => setMobileMenuOpen(false)}>회원가입</Link></>}<button onClick={handleReset}>데이터 초기화</button></div>}
       </header>
       {notice && (
         <div className="global-toast" role="status">

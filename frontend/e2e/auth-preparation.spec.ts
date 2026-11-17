@@ -14,12 +14,12 @@ test("registration validates and never reports success without a server", async 
   await expect(page).toHaveURL(/\/signup$/);
 });
 
-test("login cannot succeed without the authentication server", async ({ page }) => {
+test("invalid mock login fails", async ({ page }) => {
   await page.goto("/login");
   await page.getByLabel("로그인 ID").fill("reader");
   await page.getByLabel("비밀번호", { exact: true }).fill("secret");
   await page.getByRole("button", { name: "로그인", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("인증 서버가 연결되지 않았습니다");
+  await expect(page.getByRole("alert")).toContainText("아이디 또는 비밀번호가 올바르지 않습니다");
   await expect(page).toHaveURL(/\/login$/);
 });
 
