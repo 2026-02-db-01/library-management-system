@@ -196,17 +196,23 @@ CREATE TABLE staff_account_history (
         REFERENCES app_user (user_id) ON DELETE RESTRICT,
     CONSTRAINT fk_staff_history_admin FOREIGN KEY (processed_by_admin_user_id)
         REFERENCES app_user (user_id) ON DELETE RESTRICT,
+    -- CHECK 는 결과가 NULL 이어도 통과한다. NULL 인 컬럼을 = / IN 으로 비교하면
+    -- 그 분기가 FALSE 가 아니라 NULL 이 되어 행이 들어가 버리므로,
+    -- 분기마다 필요한 nullable 컬럼(role_at_creation, previous_status, reason)은 IS NOT NULL 을 명시한다.
     CONSTRAINT ck_staff_history_action CHECK (
         (action_type = 'CREATE'
          AND previous_status IS NULL AND new_status = 'ACTIVE'
+         AND role_at_creation IS NOT NULL
          AND role_at_creation IN ('LIBRARIAN', 'ADMIN'))
         OR
         (action_type = 'DEACTIVATE'
+         AND previous_status IS NOT NULL
          AND previous_status = 'ACTIVE' AND new_status = 'INACTIVE'
          AND role_at_creation IS NULL
          AND reason IS NOT NULL AND btrim(reason) <> '')
         OR
         (action_type = 'REACTIVATE'
+         AND previous_status IS NOT NULL
          AND previous_status = 'INACTIVE' AND new_status = 'ACTIVE'
          AND role_at_creation IS NULL
          AND reason IS NOT NULL AND btrim(reason) <> '')
