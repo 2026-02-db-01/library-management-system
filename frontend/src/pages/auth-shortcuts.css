@@ -1,0 +1,6 @@
+.mock-shortcuts { margin-top: 18px; padding-top: 16px; border-top: 1px solid #e1e7ee; }
+.mock-shortcuts p { margin: 0 0 9px; color: #40536b; font-size: 13px; font-weight: 700; }
+.mock-shortcuts div { display: flex; gap: 7px; }
+.mock-shortcuts button { flex: 1; min-height: 40px; padding: 6px; border: 1px solid #cfdbe7; border-radius: 6px; color: #17385f; background: transparent; font-size: 13px; font-weight: 700; cursor: pointer; }
+.mock-shortcuts button:hover { background: #f0f5fa; }
+.mock-shortcuts small { display: block; margin-top: 8px; color: #596a7d; font-size: 12px; }

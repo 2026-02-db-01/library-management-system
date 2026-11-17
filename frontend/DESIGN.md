@@ -1,29 +1,24 @@
-# 디자인 노트
+﻿# 책담 V2 디자인
 
-## 방향
+기존 흰색·밝은 중성색·네이비와 업무별 탐색을 유지하면서 OpenDesign Cloud의 생성 참조를 실제 React 컴포넌트에 적용했다. 대표 화면은 DB Console과 Interactive ERD다.
 
-OpenDesign의 공식 `linear-app` 시스템에서 정보 우선순위, 선명한 표 계층, 낮은 장식 밀도, 컴팩트한 내비게이션을 참고했습니다. 도서관 서비스에 맞도록 이를 흰색·밝은 중성색과 네이비 중심으로 조정했습니다.
+## 근거
 
-- 참조: [OpenDesign · linear-app](https://github.com/nexu-io/open-design/tree/main/design-systems/linear-app)
-- 연동 확인: 현재 작업 환경에는 `od` 명령과 Codex MCP 연결이 설치되어 있지 않았습니다. 공식 사용 문서에서 시스템 구성과 토큰을 확인해 적용했습니다. 유료 모델 호출은 사용하지 않았습니다.
-- 초기 화면 설계: `design/opendesign-prototype.html`
-- 실제 제품 화면: `src/pages`와 재사용 UI를 React로 구현했습니다.
+- 기존 `design/opendesign-prototype.html`, 이전 React UI 및 linear-app 정보 구조.
+- OpenDesign Cloud 프로젝트 `chaekdam-frontend-v2-a940`, 생성 참조 `design/opendesign-v2-reference.html`, 토큰·레이아웃 원본 `design/opendesign-v2-notes.md`.
+- 생성 참조의 샘플 데이터 모델은 책담 Wiki와 다르므로 제품에는 사용하지 않는다. 제품의 12테이블·19 FK는 Wiki 원문에서 생성한다.
 
-## 토큰
+## 토큰과 구성
 
-CSS 사용자 지정 속성은 `src/index.css`에 둡니다.
+- 기존 `src/index.css` 의미 토큰을 `src/v2.css`에서 조정: 본문 `#17243B`, 보조 `#596474`, 구분선 `#E0E5EC`, 네이비 `#172E50`, 작업 배경 `#F4F6F8`, 선택 `#EDF2F9`.
+- 페이지 제목 28px/모바일 24px, 본문·폼 14px, 표 13px. 식별자와 SQL만 고정폭 글꼴. 제목 tracking -0.025em.
+- 안정된 196px 업무 탐색, 28px 영역 간격, 얇은 표 구분선, 섹션 사이 명확한 여백, 기능 중심 선택 강조.
+- 카드에 장식용 강조를 추가하지 않는다. 상태 색상은 성공·오류·파손·연체·DB 연산에 의미를 갖는다.
+- ERD는 12개 엔터티, 확대/축소/이동, 관계 클릭과 양쪽 참조 컬럼 강조, 전체 컬럼 패널, 키·인덱스·용어 탐색을 제공한다.
+- DB Flow는 업무와 연결된 SELECT/INSERT/UPDATE/COMMIT/ROLLBACK, SQL 예시, 전후 값과 실패를 표시한다. 모든 DB 표시는 시뮬레이션이다.
 
-- 네이비: `--navy`, `--navy-deep`
-- 본문/보조 텍스트: `--ink`, `--ink-soft`, `--muted`
-- 배경과 표면: `--canvas`, `--canvas-soft`, `--paper`
-- 구분선: `--line`, `--line-strong`
-- 의미 색상: `--green`, `--amber`, `--red`와 각 pale 배경
+## 반응형과 접근성
 
-## 화면 규칙
+767px 이하에서는 업무 메뉴를 수평 이동 목록으로 전환하고 폼·필터를 재배치한다. 긴 데이터 표만 내부 가로스크롤을 사용한다. 모바일 주요 액션은 최소 44px이고 포커스 링·상태 텍스트를 제공한다. 모달은 Escape·Tab 순환·기존 포커스 복원을 지원한다. reduced motion은 이동 효과를 정적 강조로 바꾼다.
 
-- 홈페이지는 도서관 안내에 맞춰 책장 그래픽과 업무 진입 카드를 사용합니다.
-- 사서·관리자·DB Console은 좌측 업무 내비게이션과 표 중심의 작업 영역으로 구성합니다.
-- DB Console의 DDL, 키, 관계와 인덱스는 읽기 전용 설계 뷰로 표시하고 실 DB 접속 상태와 혼동되지 않도록 안내합니다.
-- 상태 색상은 대출 가능·연체·비활성 등 데이터 상태에만 적용합니다.
-- 모바일에서 표는 가로 스크롤하고 업무 내비게이션은 수평 이동 목록으로 바뀝니다.
-- 애니메이션은 hover 이동과 짧은 색 전환에 한정합니다.
+실제 버튼·검색·필터·모달·업무 기능은 shared Mock Store에 연결한다. 1440×900, 390×844 화면을 브라우저 테스트와 스크린샷으로 확인한다. 산출물은 정적 시안이 아닌 Vite React 앱이다.
