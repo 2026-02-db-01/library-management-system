@@ -2,14 +2,12 @@ import { useEffect, useRef, useState, lazy, Suspense } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import {
   Activity,
-  BookOpen,
   ChevronDown,
   RotateCcw,
   Rows3,
 } from "lucide-react";
 import {
   Link,
-  NavLink,
   Outlet,
   useLocation,
   useNavigate,
@@ -25,7 +23,7 @@ const DbFlowTimeline = lazy(() =>
   })),
 );
 import { useLibraryStore } from "../../store/libraryStore";
-import type { UserRole } from "../../types/domain";
+import { LibraryNav } from "./LibraryNav";
 
 export function AppShell() {
   const location = useLocation();
@@ -33,15 +31,14 @@ export function AppShell() {
   const resetDemo = useLibraryStore((state) => state.resetDemo);
   const demoRole = useLibraryStore((state) => state.demoRole);
   const users = useLibraryStore((state) => state.users);
-  const demoLibrarianId = useLibraryStore((state) => state.demoLibrarianId);
   const demoAdminId = useLibraryStore((state) => state.demoAdminId);
+  const demoLibrarianId = useLibraryStore((state) => state.demoLibrarianId);
   const setDemoAdmin = useLibraryStore((state) => state.setDemoAdmin);
-  const requestRoleSwitch = useLibraryStore((state) => state.requestRoleSwitch);
+  const setDemoLibrarian = useLibraryStore((state) => state.setDemoLibrarian);
   const completeRoleSwitch = useLibraryStore(
     (state) => state.completeRoleSwitch,
   );
   const roleSwitchTarget = useLibraryStore((state) => state.roleSwitchTarget);
-  const setDemoLibrarian = useLibraryStore((state) => state.setDemoLibrarian);
   const events = useLibraryStore((state) => state.dbFlowEvents);
   const [notice, setNotice] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -58,7 +55,6 @@ export function AppShell() {
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const dragPointerId = useRef<number | null>(null);
-  const activeRole = demoRole;
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -133,23 +129,6 @@ export function AppShell() {
     window.setTimeout(() => setNotice(""), 3500);
   }
 
-  function goTo(value: string) {
-    navigate(value);
-    setMobileMenuOpen(false);
-  }
-
-  function enterRole(role: UserRole) {
-    const route =
-      role === "MEMBER"
-        ? "/user/books"
-        : role === "LIBRARIAN"
-          ? "/librarian"
-          : "/admin";
-    requestRoleSwitch(role, route);
-    navigate(route);
-    setMobileMenuOpen(false);
-  }
-
   function onResizePointerDown(event: PointerEvent<HTMLDivElement>) {
     dragPointerId.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -199,73 +178,17 @@ export function AppShell() {
         <div className="site-header-inner">
           <Link to="/" className="brand-lockup">
             <span className="brand-symbol">
-              <BookOpen size={20} strokeWidth={2.1} />
+              <img src="/chaekdam-brand.png" alt="" />
             </span>
             <span>
               <strong>책담</strong>
               <small>LIBRARY SYSTEM</small>
             </span>
           </Link>
-          <nav className="top-nav" aria-label="주요 메뉴">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) =>
-                `top-nav-link ${isActive ? "active" : ""}`
-              }
-            >
-              홈
-            </NavLink>
-            <button
-              type="button"
-              onClick={() => enterRole("MEMBER")}
-              className={`top-nav-link ${activeRole === "MEMBER" ? "active" : ""}`}
-            >
-              USER
-            </button>
-            <button
-              type="button"
-              onClick={() => enterRole("LIBRARIAN")}
-              className={`top-nav-link ${activeRole === "LIBRARIAN" ? "active" : ""}`}
-            >
-              사서
-            </button>
-            <button
-              type="button"
-              onClick={() => enterRole("ADMIN")}
-              className={`top-nav-link ${activeRole === "ADMIN" ? "active" : ""}`}
-            >
-              관리자
-            </button>
-            {demoRole === "ADMIN" && (
-              <NavLink
-                to="/admin/db-console"
-                className={({ isActive }) =>
-                  `top-nav-link ${isActive || location.pathname.startsWith("/admin/db-console") ? "active" : ""}`
-                }
-              >
-                DB Console
-              </NavLink>
-            )}
-          </nav>
+          <LibraryNav role={demoRole} />
           <div className="header-tools">
-            {demoRole === "ADMIN" && (
-              <select
-                aria-label="데모 관리자 선택"
-                value={demoAdminId}
-                onChange={(e) => setDemoAdmin(Number(e.target.value))}
-              >
-                {users
-                  .filter(
-                    (u) => u.role === "ADMIN" && u.accountStatus === "ACTIVE",
-                  )
-                  .map((u) => (
-                    <option key={u.userId} value={u.userId}>
-                      관리자 #{u.userId}
-                    </option>
-                  ))}
-              </select>
-            )}
+            {demoRole === "ADMIN" && <select aria-label="데모 관리자 선택" value={demoAdminId} onChange={(event) => setDemoAdmin(Number(event.target.value))}>{users.filter((user) => user.role === "ADMIN" && user.accountStatus === "ACTIVE").map((user) => <option key={user.userId} value={user.userId}>관리자 #{user.userId}</option>)}</select>}
+            {demoRole === "LIBRARIAN" && <label className="header-librarian-select"><span className="sr-only">데모 사서 선택</span><select aria-label="데모 사서 선택" value={demoLibrarianId} onChange={(event) => setDemoLibrarian(Number(event.target.value))}>{users.filter((user) => user.role === "LIBRARIAN" && user.accountStatus === "ACTIVE").map((user) => <option key={user.userId} value={user.userId}>{user.fullName} · {user.userId}</option>)}</select></label>}
             {demoRole && (
               <button
                 className="header-reset"
@@ -285,36 +208,9 @@ export function AppShell() {
               className="top-nav-link"
               to={demoRole ? "/account" : "/signup"}
             >
-              {demoRole ? "내 계정" : "회원가입 데모"}
+              {demoRole ? "내 계정" : "회원가입"}
             </Link>
-            <span className="demo-chip">
-              <i aria-hidden="true" />{" "}
-              {demoRole ? `DEMO · ${demoRole}` : "역할 선택"}
-            </span>
-            {demoRole === "LIBRARIAN" && (
-              <label className="header-librarian-select">
-                <span className="sr-only">데모 사서 ID</span>
-                <select
-                  aria-label="데모 사서 선택"
-                  value={demoLibrarianId}
-                  onChange={(event) =>
-                    setDemoLibrarian(Number(event.target.value))
-                  }
-                >
-                  {users
-                    .filter(
-                      (user) =>
-                        user.role === "LIBRARIAN" &&
-                        user.accountStatus === "ACTIVE",
-                    )
-                    .map((user) => (
-                      <option value={user.userId} key={user.userId}>
-                        {user.fullName} · {user.userId}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            )}
+            {!demoRole && <Link className="top-nav-link" to="/login">로그인</Link>}
             <button
               type="button"
               className={`flow-toggle ${flowOpen ? "active" : ""}`}
@@ -346,42 +242,7 @@ export function AppShell() {
             </button>
           </div>
         </div>
-        {mobileMenuOpen && (
-          <nav className="mobile-nav" aria-label="모바일 메뉴">
-            <button
-              className={location.pathname === "/" ? "active" : ""}
-              onClick={() => goTo("/")}
-            >
-              홈
-            </button>
-            <button
-              className={demoRole === "MEMBER" ? "active" : ""}
-              onClick={() => enterRole("MEMBER")}
-            >
-              USER 역할
-            </button>
-            <button
-              className={demoRole === "LIBRARIAN" ? "active" : ""}
-              onClick={() => enterRole("LIBRARIAN")}
-            >
-              사서 역할
-            </button>
-            <button
-              className={demoRole === "ADMIN" ? "active" : ""}
-              onClick={() => enterRole("ADMIN")}
-            >
-              관리자 역할
-            </button>
-            {demoRole === "ADMIN" && (
-              <button onClick={() => goTo("/admin/db-console")}>
-                DB Console
-              </button>
-            )}
-            <button onClick={handleReset}>
-              <RotateCcw size={14} /> 데모 초기화
-            </button>
-          </nav>
-        )}
+        {mobileMenuOpen && <div className="mobile-nav"><LibraryNav role={demoRole} mobile onNavigate={() => setMobileMenuOpen(false)} /><Link to="/login" onClick={() => setMobileMenuOpen(false)}>로그인</Link><Link to="/signup" onClick={() => setMobileMenuOpen(false)}>회원가입</Link><button onClick={handleReset}>데이터 초기화</button></div>}
       </header>
       {notice && (
         <div className="global-toast" role="status">
@@ -473,12 +334,12 @@ export function AppShell() {
       <footer className="site-footer">
         <div>
           <span className="brand-footer-mark">
-            <BookOpen size={16} />
+            <img src="/chaekdam-brand.png" alt="" />
           </span>
           <strong>책담</strong>
           <span>도서관 통합 관리 시스템</span>
         </div>
-        <p>설계 기반 화면 시연 · 실제 API와 데이터베이스 연결 없음</p>
+        <p>{location.pathname === "/" ? <><Link to="/#library-guide">이용 안내</Link> · <Link to="/signup">회원가입</Link> · 화면 데모</> : "설계 기반 화면 시연 · 실제 API와 데이터베이스 연결 없음"}</p>
       </footer>
     </div>
   );

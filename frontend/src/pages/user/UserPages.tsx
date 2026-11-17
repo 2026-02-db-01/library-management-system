@@ -8,7 +8,7 @@ import {
   Search,
   UserRound,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { BookCard } from "../../components/catalog/BookCard";
 import { DataTable } from "../../components/tables/DataTable";
@@ -73,6 +73,7 @@ function DemoMemberPicker() {
 }
 
 export function UserBooksPage() {
+  const [initialParams] = useSearchParams();
   const data = useLibraryStore(
     useShallow((state) => ({
       users: state.users,
@@ -89,7 +90,7 @@ export function UserBooksPage() {
       requests: state.requests,
     })),
   );
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => initialParams.get("q") ?? "");
   const [publisher, setPublisher] = useState("");
   const [authorQuery, setAuthorQuery] = useState("");
   const [category, setCategory] = useState("");
@@ -97,7 +98,7 @@ export function UserBooksPage() {
   const [yearTo, setYearTo] = useState("");
   const [page, setPage] = useState(1);
   const [searchBy, setSearchBy] = useState<"title" | "author" | "isbn">(
-    "title",
+    initialParams.get("by") === "author" ? "author" : initialParams.get("by") === "isbn" ? "isbn" : "title",
   );
   const [availabilityFilter, setAvailabilityFilter] = useState<
     "all" | "available" | "unavailable"

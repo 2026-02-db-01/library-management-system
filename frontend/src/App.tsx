@@ -13,13 +13,14 @@ import type { UserRole } from "./types/domain";
 import "./App.css";
 import {
   AccountPage,
-  SignupPage,
+  SignupPage as DemoSignupPage,
   AccountsPage,
   CopiesPage,
   CorrectionsPage,
   HistoryPage,
   LoanHistoryPage,
 } from "./pages/V2Pages";
+import { LoginPage, SignupPage } from "./pages/AuthPages";
 
 const HomePage = lazy(() =>
   import("./pages/home/HomePage").then((module) => ({
@@ -163,6 +164,8 @@ function App() {
           <Route path="/" element={<AppShell />}>
             <Route index element={<HomePage />} />
             <Route path="signup" element={<SignupPage />} />
+            <Route path="signup/demo" element={<DemoSignupPage />} />
+            <Route path="login" element={<LoginPage />} />
             <Route
               path="account"
               element={

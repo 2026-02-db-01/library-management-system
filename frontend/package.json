@@ -14,7 +14,10 @@
     "schema:generate": "node scripts/generate-schema.mjs"
   },
   "dependencies": {
+    "@astryxdesign/core": "^0.7.16",
+    "@astryxdesign/theme-neutral": "^0.7.16",
     "@noble/hashes": "^2.4.0",
+    "@stylexjs/stylex": "^0.19.2",
     "@xyflow/react": "^12.12.1",
     "lucide-react": "^1.70.0",
     "react": "^19.3.1",
@@ -24,6 +27,7 @@
     "zustand": "^5.0.16"
   },
   "devDependencies": {
+    "@astryxdesign/cli": "^0.7.16",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.65.1",
     "@tailwindcss/vite": "^4.3.4",

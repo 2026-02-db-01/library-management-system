@@ -145,7 +145,7 @@ export function SchemaMetadataPage() {
       <div className="breadcrumb">
         <Link to="/">홈</Link>
         <ArrowRight size={13} />
-        <Link to="/#catalog">데이터 카탈로그</Link>
+        <Link to="/admin/db-console/catalog">데이터 카탈로그</Link>
         <ArrowRight size={13} />
         <code>{table.name}</code>
       </div>
