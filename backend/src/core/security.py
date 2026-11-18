@@ -4,19 +4,21 @@ from typing import Any
 import jwt
 from jwt.exceptions import InvalidTokenError
 from pwdlib import PasswordHash
+from pwdlib.hashers.argon2 import Argon2Hasher
+from pwdlib.hashers.bcrypt import BcryptHasher
 
 from src.core.config import settings
 
-password_hash = PasswordHash.recommended()
+password_hash = PasswordHash((Argon2Hasher(), BcryptHasher()))
 
 
 def hash_password(plain_password: str) -> str:
-    """평문 비밀번호를 bcrypt 해시 문자열로 변환합니다."""
+    """평문 비밀번호를 해시 문자열로 변환합니다."""
     return password_hash.hash(plain_password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """입력된 평문 비밀번호와 DB에 저장된 해시값을 비교 검증합니다."""
+    """입력된 평문 비밀번호와 DB에 저장된 해시값(Argon2 및 Bcrypt)을 비교 검증합니다."""
     return password_hash.verify(plain_password, hashed_password)
 
 
