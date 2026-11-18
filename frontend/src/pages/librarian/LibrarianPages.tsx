@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+
+import { useMemo, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -22,6 +23,8 @@ import {
   Card,
   EmptyState,
   Field,
+  Modal,
+  ModalFooter,
   MetricCard,
   Notice,
   PageHeading,
@@ -293,6 +296,7 @@ export function LibrarianCheckoutPage() {
   const data = useLibraryData();
   const checkout = useLibraryStore((state) => state.checkout);
   const [memberQuery, setMemberQuery] = useState("");
+  const [bookQuery, setBookQuery] = useState("");
   const [memberId, setMemberId] = useState(0);
   const [bookId, setBookId] = useState(0);
   const [copyId, setCopyId] = useState(0);
@@ -312,11 +316,32 @@ export function LibrarianCheckoutPage() {
     ? memberId
     : (members[0]?.userId ?? 0);
 
-  const defaultBook =
-    data.books.find((book) => getAvailableCopies(book.bookId, data).length > 0) ??
-    data.books[0];
+  const filteredBooks = data.books.filter((book) => {
+    const q = bookQuery.trim().toLocaleLowerCase();
+    if (!q) return true;
+    const authorNames = data.bookAuthors
+      .filter((ba) => ba.bookId === book.bookId)
+      .map(
+        (ba) =>
+          data.authors.find((a) => a.authorId === ba.authorId)?.authorName ??
+          "",
+      )
+      .join(" ");
+    const copyCodes = data.copies
+      .filter((c) => c.bookId === book.bookId)
+      .map((c) => c.copyCode)
+      .join(" ");
+    return `${book.title} ${book.isbn ?? ""} ${book.bookId} ${authorNames} ${copyCodes}`
+      .toLocaleLowerCase()
+      .includes(q);
+  });
 
-  const activeBookId = data.books.some((book) => book.bookId === bookId)
+  const defaultBook =
+    filteredBooks.find(
+      (book) => getAvailableCopies(book.bookId, data).length > 0,
+    ) ?? filteredBooks[0];
+
+  const activeBookId = filteredBooks.some((book) => book.bookId === bookId)
     ? bookId
     : (defaultBook?.bookId ?? 0);
 
@@ -326,7 +351,9 @@ export function LibrarianCheckoutPage() {
   const demoLibrarian = data.users.find(
     (user) => user.userId === data.demoLibrarianId,
   );
-  const selectedBook = data.books.find((book) => book.bookId === activeBookId);
+  const selectedBook = filteredBooks.find(
+    (book) => book.bookId === activeBookId,
+  );
   const availableCopies = selectedBook
     ? getAvailableCopies(selectedBook.bookId, data)
     : [];
@@ -369,6 +396,20 @@ export function LibrarianCheckoutPage() {
     setResult(null);
   }
 
+  function handleBookQueryChange(value: string) {
+    setBookQuery(value);
+    const trimmed = value.trim().toLocaleLowerCase();
+    if (!trimmed) return;
+    const exactCopy = data.copies.find(
+      (copy) => copy.copyCode.toLocaleLowerCase() === trimmed,
+    );
+    if (exactCopy) {
+      setBookId(exactCopy.bookId);
+      setCopyId(exactCopy.copyId);
+      setResult(null);
+    }
+  }
+
   async function handleCheckout() {
     if (!canCheckout) return;
     setBusy(true);
@@ -379,7 +420,8 @@ export function LibrarianCheckoutPage() {
         data.demoLibrarianId,
       );
       if (outcome.ok) {
-        const nextBook = data.books.find(
+        const pool = filteredBooks.length > 0 ? filteredBooks : data.books;
+        const nextBook = pool.find(
           (book) =>
             book.bookId !== activeBookId &&
             getAvailableCopies(book.bookId, data).length > 0,
@@ -480,23 +522,38 @@ export function LibrarianCheckoutPage() {
               <p>실물 관리번호 기준으로 대출합니다.</p>
             </div>
           </div>
+          <Field label="도서 검색">
+            <span className="input-with-icon">
+              <Search size={15} />
+              <input
+                value={bookQuery}
+                onChange={(event) => handleBookQueryChange(event.target.value)}
+                placeholder="도서명, 저자, ISBN, 관리번호(CD-...)"
+              />
+            </span>
+          </Field>
           <Field label="도서">
             <select
               value={activeBookId}
               onChange={(event) => onBookChange(Number(event.target.value))}
+              disabled={filteredBooks.length === 0}
             >
-              {data.books.map((book) => {
-                const available = getAvailableCopies(book.bookId, data).length;
-                return (
-                  <option
-                    value={book.bookId}
-                    key={book.bookId}
-                    disabled={available === 0}
-                  >
-                    {book.title} · 대출 가능 {available}권
-                  </option>
-                );
-              })}
+              {filteredBooks.length === 0 ? (
+                <option value={0}>검색 조건에 맞는 도서 없음</option>
+              ) : (
+                filteredBooks.map((book) => {
+                  const available = getAvailableCopies(book.bookId, data).length;
+                  return (
+                    <option
+                      value={book.bookId}
+                      key={book.bookId}
+                      disabled={available === 0}
+                    >
+                      {book.title} · 대출 가능 {available}권
+                    </option>
+                  );
+                })
+              )}
             </select>
           </Field>
           <Field label="실물 소장본">
@@ -516,6 +573,9 @@ export function LibrarianCheckoutPage() {
               )}
             </select>
           </Field>
+          {!selectedBook && (
+            <div className="field-hint">검색 결과에 도서가 없습니다.</div>
+          )}
           <div className="checkout-rule-line">
             <span>
               <Clock3 size={14} /> 대출 기간
@@ -576,56 +636,64 @@ export function LibrarianCheckoutPage() {
 }
 
 export function LibrarianReturnsPage() {
+  const [targetLoanId, setTargetLoanId] = useState<number | null>(null);
   const [damaged, setDamaged] = useState(false);
   const [damageReason, setDamageReason] = useState("");
-  const [busyLoanId, setBusyLoanId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
   const data = useLibraryData();
   const returnLoan = useLibraryStore((state) => state.returnLoan);
   const [result, setResult] = useState<ActionResult | null>(null);
+
   const activeLoans = data.loans
     .filter((loan) => !loan.isCancelled && loan.returnedAt === null)
     .sort((a, b) => a.currentDueDate.localeCompare(b.currentDueDate));
 
-  async function handleReturn(loanId: number) {
-    if (busyLoanId !== null) return;
-    setBusyLoanId(loanId);
+  const targetLoan =
+    targetLoanId !== null
+      ? activeLoans.find((loan) => loan.loanId === targetLoanId) ?? null
+      : null;
+
+  function openReturnModal(loanId: number) {
+    setTargetLoanId(loanId);
+    setDamaged(false);
+    setDamageReason("");
+    setResult(null);
+  }
+
+  async function handleConfirmReturn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!targetLoan || busy) return;
+    setBusy(true);
     try {
-      const outcome = await returnLoan(loanId, data.demoLibrarianId, {
-        damaged,
-        reason: damageReason,
-      });
+      const outcome = await returnLoan(
+        targetLoan.loanId,
+        data.demoLibrarianId,
+        {
+          damaged,
+          reason: damaged ? damageReason.trim() : "",
+        },
+      );
       setResult(outcome);
+      if (outcome.ok) {
+        setTargetLoanId(null);
+        setDamaged(false);
+        setDamageReason("");
+      }
     } finally {
-      setBusyLoanId(null);
+      setBusy(false);
     }
   }
 
   return (
     <WorkspaceLayout section="librarian">
-      <div className="advanced-search">
-        <label>
-          <input
-            type="checkbox"
-            checked={damaged}
-            onChange={(e) => setDamaged(e.target.checked)}
-          />{" "}
-          파손 확인 반납
-        </label>
-        <label>
-          파손 사유
-          <input
-            value={damageReason}
-            onChange={(e) => setDamageReason(e.target.value)}
-            placeholder="파손 반납 시 필수"
-          />
-        </label>
-      </div>
       <PageHeading
         eyebrow="LIBRARY DESK · RETURNS"
         title="도서 반납"
         description="활성 대출에서 회원과 실물 소장본을 확인하고 반납 시각과 처리자를 기록합니다."
       />
-      {result && <ResultMessage message={result.message} error={!result.ok} />}
+      {result && !targetLoan && (
+        <ResultMessage message={result.message} error={!result.ok} />
+      )}
       <Card className="table-card">
         <div className="table-card-heading">
           <SectionHeading
@@ -685,11 +753,10 @@ export function LibrarianReturnsPage() {
               render: (loan) => (
                 <Button
                   variant="secondary"
-                  disabled={busyLoanId === loan.loanId}
-                  onClick={() => handleReturn(loan.loanId)}
+                  onClick={() => openReturnModal(loan.loanId)}
                   icon={<RotateCcw size={14} />}
                 >
-                  {busyLoanId === loan.loanId ? "처리 중…" : "반납 처리"}
+                  반납 처리
                 </Button>
               ),
             },
@@ -700,6 +767,70 @@ export function LibrarianReturnsPage() {
         반납 시 `returned_at`과 `returned_by_user_id`가 함께 기록됩니다. 반납
         시점 연체 일수는 이력에서 계산되며 별도 연체료는 없습니다.
       </Notice>
+
+      {targetLoan && (
+        <Modal
+          title="도서 반납 확인"
+          description={`대출 #${targetLoan.loanId} · ${copyCode(targetLoan, data)}`}
+          onClose={() => {
+            if (!busy) setTargetLoanId(null);
+          }}
+        >
+          <form className="modal-form" onSubmit={handleConfirmReturn}>
+            <p>
+              <strong>{bookTitle(targetLoan, data)}</strong> (
+              <code>{copyCode(targetLoan, data)}</code>) · 대출 회원{" "}
+              <strong>{memberName(targetLoan, data)}</strong>
+            </p>
+            <label>
+              <input
+                type="checkbox"
+                checked={damaged}
+                onChange={(e) => setDamaged(e.target.checked)}
+              />{" "}
+              파손 확인 반납 (소장본 상태를 DAMAGED로 전환)
+            </label>
+            {damaged && (
+              <Field
+                label="파손 사유 · 필수"
+                hint="회원 이름이나 연락처 등 개인정보는 입력하지 마세요."
+              >
+                <input
+                  required
+                  maxLength={255}
+                  value={damageReason}
+                  onChange={(e) => setDamageReason(e.target.value)}
+                  placeholder="예: 표지 찢어짐 및 젖음 확인"
+                />
+              </Field>
+            )}
+            {result && !result.ok && (
+              <ResultMessage message={result.message} error />
+            )}
+            <ModalFooter>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setTargetLoanId(null)}
+              >
+                취소
+              </Button>
+              <Button
+                type="submit"
+                disabled={busy || (damaged && !damageReason.trim())}
+                icon={<RotateCcw size={14} />}
+              >
+                {busy
+                  ? "처리 중…"
+                  : damaged
+                    ? "파손 반납 확정"
+                    : "일반 반납 확정"}
+              </Button>
+            </ModalFooter>
+          </form>
+        </Modal>
+      )}
     </WorkspaceLayout>
   );
 }

@@ -676,8 +676,8 @@ export function UserLoansPage() {
                       <Button
                         variant="secondary"
                         disabled={!eligible}
-                        onClick={() =>
-                          setResult(renewLoan(loan.loanId, state.demoMemberId))
+                        onClick={async () =>
+                          setResult(await renewLoan(loan.loanId, state.demoMemberId))
                         }
                         icon={<CalendarClock size={14} />}
                       >
@@ -690,9 +690,9 @@ export function UserLoansPage() {
                       {eligible && (
                         <Button
                           variant="quiet"
-                          onClick={() =>
+                          onClick={async () =>
                             setResult(
-                              renewLoan(loan.loanId, state.demoMemberId, true),
+                              await renewLoan(loan.loanId, state.demoMemberId, true),
                             )
                           }
                           icon={<AlertTriangle size={14} />}

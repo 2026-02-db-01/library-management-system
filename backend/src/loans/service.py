@@ -394,11 +394,12 @@ def return_loan(
     loan.returned_at = now
     loan.returned_by_user_id = librarian_id
 
+    # [교체 1] 이미 DAMAGED 상태가 아닐 때만 상태 변경 및 이력 기록
     if payload.damaged:
         copy = db.scalar(
             select(BookCopy).where(BookCopy.copy_id == loan.copy_id).with_for_update()
         )
-        if copy is not None:
+        if copy is not None and copy.management_status != "DAMAGED":
             db.add(
                 CopyStatusHistory(
                     copy_id=copy.copy_id,
@@ -417,7 +418,12 @@ def return_loan(
         if member is not None:
             _recalculate_member_suspension(db, member)
 
-    msg = "반납 완료 · 신규 대출 정지를 재계산했습니다."
+    # [교체 2] 일반 반납과 파손 반납 완료 메시지 구분
+    msg = (
+        "파손 반납 완료 · 소장본 상태를 DAMAGED로 변경했습니다."
+        if payload.damaged
+        else "반납 완료 · 신규 대출 정지를 재계산했습니다."
+    )
     db.add(
         RequestRecord(
             request_id=req_id,

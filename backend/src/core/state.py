@@ -158,23 +158,27 @@ def get_library_state(
         users_out.append(item)
 
     raw_loans = list(db.scalars(select(Loan).order_by(Loan.loan_id.desc())).all())
-    if not is_staff:
-        visible_loans = (
-            [l for l in raw_loans if l.member_user_id == viewer.user_id]
-            if viewer is not None
-            else []
-        )
-    else:
-        visible_loans = raw_loans
+    loans_out: list[LoanStateItem] = []
+    my_loan_ids: set[int] = set()
 
-    visible_loan_ids = {l.loan_id for l in visible_loans}
+    for l in raw_loans:
+        is_mine = viewer is not None and l.member_user_id == viewer.user_id
+        if is_staff or is_mine:
+            loans_out.append(LoanStateItem.model_validate(l))
+            if is_mine:
+                my_loan_ids.add(l.loan_id)
+        elif not l.is_cancelled and l.returned_at is None:
+            item = LoanStateItem.model_validate(l)
+            item.member_user_id = None
+            loans_out.append(item)
+
     raw_renewals = list(
         db.scalars(select(LoanRenewal).order_by(LoanRenewal.renewal_id.asc())).all()
     )
     visible_renewals = (
         raw_renewals
         if is_staff
-        else [r for r in raw_renewals if r.loan_id in visible_loan_ids]
+        else [r for r in raw_renewals if r.loan_id in my_loan_ids]
     )
 
     return LibraryDataResponse(
@@ -195,7 +199,7 @@ def get_library_state(
             BookCopyResponse.model_validate(c)
             for c in db.scalars(select(BookCopy).order_by(BookCopy.copy_id.asc())).all()
         ],
-        loans=[LoanStateItem.model_validate(l) for l in visible_loans],
+        loans=loans_out,
         renewals=[LoanRenewalStateItem.model_validate(r) for r in visible_renewals],
         staff_history=(
             [

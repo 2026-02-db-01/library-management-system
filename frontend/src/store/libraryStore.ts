@@ -204,8 +204,10 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
     initialize: async () => {
       set({ isLoading: true });
       try {
-        const user = await httpAuthTransport.currentUser();
-        const data = await libraryApi.fetchState();
+        const [user, data] = await Promise.all([
+          httpAuthTransport.currentUser().catch(() => null),
+          libraryApi.fetchState(),
+        ]);
         set({
           ...data,
           ...mapAuthToRoleState(user),
@@ -219,7 +221,7 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
 
     syncState: async () => {
       const [user, data] = await Promise.all([
-        httpAuthTransport.currentUser(),
+        httpAuthTransport.currentUser().catch(() => null),
         libraryApi.fetchState(),
       ]);
       set({

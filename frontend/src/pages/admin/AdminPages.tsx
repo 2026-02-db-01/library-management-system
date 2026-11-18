@@ -132,8 +132,8 @@ export function AdminDashboardPage() {
       <PageHeading
         eyebrow="ADMINISTRATION · OVERVIEW"
         title="관리자 대시보드"
-        description="회원, 도서, 소장본과 대출 현황을 공유 데모 상태에서 집계합니다."
-        actions={<Badge tone="blue">DEMO ADMIN</Badge>}
+        description="회원, 도서, 소장본과 대출 현황을 공유 DB 데이터에서 집계합니다."
+        actions={<Badge tone="blue">ADMIN</Badge>}
       />
       <div className="metric-grid five">
         <MetricCard
@@ -239,8 +239,8 @@ export function AdminDashboardPage() {
         </Card>
       </div>
       <Notice tone="info" title="집계 기준">
-        모든 수치는 같은 Mock Data에서 계산합니다. 새 대출·반납·연장은 관리자
-        통계에도 즉시 반영됩니다.
+        모든 수치는 PostgreSQL DB 데이터에서 계산합니다. 새 대출·반납·연장은
+        관리자 통계에도 즉시 반영됩니다.
       </Notice>
     </WorkspaceLayout>
   );
@@ -269,7 +269,7 @@ export function AdminBooksPage() {
       const authors = getAuthorsForBook(book.bookId, data)
         .map((author) => author.authorName)
         .join(" ");
-      return `${book.title} ${book.isbn} ${authors}`
+      return `${book.title} ${book.isbn ?? ""} ${authors}`
         .toLocaleLowerCase()
         .includes(query.trim().toLocaleLowerCase());
     })
@@ -336,7 +336,7 @@ export function AdminBooksPage() {
             {
               key: "isbn",
               title: "ISBN-13",
-              render: (book) => <code>{book.isbn}</code>,
+              render: (book) => <code>{book.isbn ?? "없음"}</code>,
             },
             {
               key: "copies",
@@ -405,8 +405,8 @@ export function AdminBooksPage() {
           key="create-book"
           data={data}
           onClose={() => setShowCreate(false)}
-          onSave={(values) => {
-            const outcome = saveBook(values);
+          onSave={async (values) => {
+            const outcome = await saveBook(values);
             setResult(outcome);
             if (outcome.ok) setShowCreate(false);
             return outcome;
@@ -456,18 +456,21 @@ export function AdminBooksPage() {
           )}
           data={data}
           onClose={() => setEditingBookId(null)}
-          onSave={(values) => {
-            const outcome = saveBook(values, editingBook.bookId);
+          onSave={async (values) => {
+            const outcome = await saveBook(values, editingBook.bookId);
             setResult(outcome);
             if (outcome.ok) setEditingBookId(null);
             return outcome;
           }}
-          onAddCopy={(code) => {
-            const outcome = addCopy(editingBook.bookId, code);
+          onAddCopy={async (code) => {
+            const outcome = await addCopy(editingBook.bookId, code);
             setResult(outcome);
             return outcome;
           }}
-          onToggleCopy={(id) => setResult(toggleCopyStatus(id))}
+          onToggleCopy={async (id) => {
+            const outcome = await toggleCopyStatus(id);
+            setResult(outcome);
+          }}
         />
       )}
     </WorkspaceLayout>
@@ -489,9 +492,9 @@ function BookEditorModal({
   copies?: ReturnType<typeof useAdminData>["copies"];
   data?: ReturnType<typeof useAdminData>;
   onClose: () => void;
-  onSave: (values: BookFormValues) => ActionResult;
-  onAddCopy?: (code: string) => ActionResult;
-  onToggleCopy?: (id: number) => void;
+  onSave: (values: BookFormValues) => Promise<ActionResult> | ActionResult;
+  onAddCopy?: (code: string) => Promise<ActionResult> | ActionResult;
+  onToggleCopy?: (id: number) => Promise<void> | void;
 }) {
   const [values, setValues] = useState<BookFormValues>({
     isbn: book?.isbn ?? "",
@@ -508,26 +511,39 @@ function BookEditorModal({
     categoryCode: book?.categoryCode ?? "DEMO_GENERAL",
   });
   const [copyCode, setCopyCode] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [addingCopy, setAddingCopy] = useState(false);
   const [message, setMessage] = useState<ActionResult | null>(null);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const outcome = onSave(values);
-    setMessage(outcome);
+    if (saving) return;
+    setSaving(true);
+    try {
+      const outcome = await onSave(values);
+      setMessage(outcome);
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function submitCopy(event: FormEvent<HTMLFormElement>) {
+  async function submitCopy(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!onAddCopy) return;
-    const outcome = onAddCopy(copyCode);
-    setMessage(outcome);
-    if (outcome.ok) setCopyCode("");
+    if (!onAddCopy || addingCopy) return;
+    setAddingCopy(true);
+    try {
+      const outcome = await onAddCopy(copyCode);
+      setMessage(outcome);
+      if (outcome.ok) setCopyCode("");
+    } finally {
+      setAddingCopy(false);
+    }
   }
 
   return (
     <Modal
       title={book ? "도서 정보 수정" : "도서 등록"}
-      description="서지정보와 author 연결을 Mock Store에 저장합니다."
+      description="서지정보와 저자 연결을 PostgreSQL DB에 저장합니다."
       onClose={onClose}
       wide
     >
@@ -635,7 +651,9 @@ function BookEditorModal({
             <Button variant="secondary" type="button" onClick={onClose}>
               취소
             </Button>
-            <Button type="submit">{book ? "변경 저장" : "도서 등록"}</Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? "저장 중…" : book ? "변경 저장" : "도서 등록"}
+            </Button>
           </ModalFooter>
         </form>
         {book && data && onAddCopy && onToggleCopy && (
@@ -659,9 +677,10 @@ function BookEditorModal({
               <Button
                 type="submit"
                 variant="secondary"
+                disabled={addingCopy}
                 icon={<Plus size={15} />}
               >
-                추가
+                {addingCopy ? "추가 중…" : "추가"}
               </Button>
             </form>
             <div className="copy-admin-list">
@@ -705,6 +724,7 @@ export function AdminAuthorsPage() {
   const [newName, setNewName] = useState("");
   const [editingAuthor, setEditingAuthor] = useState<Author | null>(null);
   const [editingName, setEditingName] = useState("");
+  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ActionResult | null>(null);
   const authors = useMemo(
     () =>
@@ -714,19 +734,30 @@ export function AdminAuthorsPage() {
     [data.authors],
   );
 
-  function submitAuthor(event: FormEvent<HTMLFormElement>) {
+  async function submitAuthor(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const outcome = addAuthor(newName);
-    setResult(outcome);
-    if (outcome.ok) setNewName("");
+    if (busy) return;
+    setBusy(true);
+    try {
+      const outcome = await addAuthor(newName);
+      setResult(outcome);
+      if (outcome.ok) setNewName("");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function submitRename(event: FormEvent<HTMLFormElement>) {
+  async function submitRename(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!editingAuthor) return;
-    const outcome = renameAuthor(editingAuthor.authorId, editingName);
-    setResult(outcome);
-    if (outcome.ok) setEditingAuthor(null);
+    if (!editingAuthor || busy) return;
+    setBusy(true);
+    try {
+      const outcome = await renameAuthor(editingAuthor.authorId, editingName);
+      setResult(outcome);
+      if (outcome.ok) setEditingAuthor(null);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -757,8 +788,8 @@ export function AdminAuthorsPage() {
             placeholder="저자 이름을 입력하세요"
           />
         </Field>
-        <Button type="submit" icon={<Plus size={15} />}>
-          저자 등록
+        <Button type="submit" disabled={busy} icon={<Plus size={15} />}>
+          {busy ? "등록 중…" : "저자 등록"}
         </Button>
       </form>
       <Card className="table-card">
@@ -864,8 +895,8 @@ export function AdminAuthorsPage() {
               >
                 취소
               </Button>
-              <Button type="submit" icon={<Pencil size={14} />}>
-                저자명 저장
+              <Button type="submit" disabled={busy} icon={<Pencil size={14} />}>
+                {busy ? "저장 중…" : "저자명 저장"}
               </Button>
             </ModalFooter>
           </form>
@@ -912,7 +943,7 @@ export function AdminStatisticsPage() {
       <PageHeading
         eyebrow="ADMINISTRATION · ANALYTICS"
         title="업무 통계"
-        description="대출, 반납, 연체, 도서별·사서별 이력을 동일한 데모 기록에서 계산합니다."
+        description="대출, 반납, 연체, 도서별·사서별 이력을 동일한 PostgreSQL 기록에서 계산합니다."
       />
       <div className="metric-grid four">
         <MetricCard
@@ -948,7 +979,7 @@ export function AdminStatisticsPage() {
         <Card className="chart-card">
           <SectionHeading
             title="월별 대출·반납"
-            description="최근 6개월의 실제 Mock Loan 기록"
+            description="최근 6개월의 실제 대출·반납 기록"
           />
           <div className="chart-canvas">
             <ResponsiveContainer width="100%" height="100%">
