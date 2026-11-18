@@ -1,0 +1,30 @@
+# 외부 공개용 덧씌우기 (로컬 개발에는 쓰지 않는다)
+#  - 모든 TCP 접속에 SSL 강제
+#  - 외부에서는 library_app / library_readonly 만 접속 가능 (postgres 슈퍼유저는 컨테이너 안에서만)
+#
+# 준비: ./ssl/make_cert.sh  (ssl/ 의 키·인증서는 커밋하지 않는다)
+# 실행: docker compose -f compose.yml -f compose.ssl.yml up -d
+#   매번 -f 를 쓰기 싫으면 .env 에  COMPOSE_FILE=compose.yml:compose.ssl.yml
+services:
+  db:
+    # PostgreSQL 은 개인키 파일의 소유자가 postgres 이고 권한이 600 이어야 한다.
+    # 호스트 파일을 그대로 마운트하면 소유자가 맞지 않으므로, 시작할 때 컨테이너 안으로 복사한다.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        install -o postgres -g postgres -m 600 /ssl/server.key /var/lib/postgresql/server.key &&
+        install -o postgres -g postgres -m 644 /ssl/server.crt /var/lib/postgresql/server.crt &&
+        exec docker-entrypoint.sh "$$@"
+      - --
+    command: >
+      postgres -c shared_buffers=48MB -c effective_cache_size=128MB
+               -c work_mem=2MB -c maintenance_work_mem=32MB -c max_connections=20
+               -c ssl=on
+               -c ssl_cert_file=/var/lib/postgresql/server.crt
+               -c ssl_key_file=/var/lib/postgresql/server.key
+               -c ssl_min_protocol_version=TLSv1.2
+               -c hba_file=/etc/postgresql/pg_hba.conf
+    volumes:
+      - ./ssl:/ssl:ro
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro

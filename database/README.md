@@ -125,3 +125,17 @@ psycopg 3 기준 `e.sqlstate`, `e.diag.constraint_name`
 | `member_kim` | 정상, 연장한 대출 1건 |
 | `member_jung` | 대출 기록 없음 → 신규 대출 테스트용 |
 | `librarian3` | 비활성 직원 |
+
+## 8. 외부 공개용 실행 (SSL) — 로컬 개발에는 필요 없음
+
+시연 서버처럼 인터넷에서 접속받는 DB 는 `compose.ssl.yml` 을 덧씌워 실행한다.
+
+```bash
+sh ssl/make_cert.sh                                   # 자체 서명 인증서 (ssl/ 는 커밋 금지)
+echo 'COMPOSE_FILE=compose.yml:compose.ssl.yml' >> .env
+docker compose up -d
+```
+
+- 모든 TCP 접속은 SSL 필수, 외부에서는 `library_app` / `library_readonly` 로 `library` DB 만 접속 가능 (`pg_hba.conf`)
+- `postgres` 슈퍼유저는 `docker compose exec` 로 컨테이너 안에서만 쓴다
+- 클라이언트 접속 문자열에 `sslmode=require` (psycopg 기본값 `prefer` 도 SSL 로 붙는다)
