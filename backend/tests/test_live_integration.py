@@ -30,9 +30,16 @@ def client():
 
 
 def login(http, name, password=None):
-    return request(http, "POST", "/auth/login", 200, json={
+    response = http.post("/auth/login", json={
         "loginId": name, "password": password or SEED_PASSWORD,
     })
+    assert response.status_code == 200, response.text
+    if BASE.startswith("https://"):
+        cookie = response.headers["set-cookie"].lower()
+        assert cookie.startswith("access_token=")
+        assert all(attribute in cookie for attribute in ("; secure", "; httponly", "; samesite=lax"))
+        assert "x-access-token" not in response.headers
+    return response.json()
 
 
 def identity():
@@ -87,7 +94,12 @@ def test_session_role_privacy_and_staff_policy():
         request(admin, "PATCH", f"/users/staff/{created['userId']}/status", 200, json={"reason": "QA employee status"})
         request(staff, "GET", "/auth/me", 403)
         request(staff, "POST", "/books", 403, json={"title": "Denied"})
-        request(member, "POST", "/auth/logout", 204)
+        logout = member.post("/auth/logout")
+        assert logout.status_code == 204
+        if BASE.startswith("https://"):
+            cookie = logout.headers["set-cookie"].lower()
+            assert "max-age=0" in cookie and "; secure" in cookie
+        assert "access_token" not in member.cookies
         request(member, "GET", "/auth/me", 401)
 
 

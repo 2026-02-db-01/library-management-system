@@ -1,0 +1,125 @@
+name: Chaekdam pull request checks
+
+on:
+  pull_request:
+    branches: [main, feature/fullstack]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaekdam-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chrome
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-failure
+          path: frontend/test-results/
+          if-no-files-found: ignore
+
+  backend:
+    name: FastAPI unit checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: 'sqlite+pysqlite:///:memory:'
+      SECRET_KEY: local-ci-signing-key-for-unit-tests-only
+      DEBUG: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install . pytest
+      - run: python -m pytest tests/test_health.py
+
+  integration:
+    name: PostgreSQL 16 and HTTPS integration
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: chaekdam-ci-pg16
+      DEBUG: 'false'
+      CHAEKDAM_INTEGRATION_URL: https://127.0.0.1:8443
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install ./backend pytest
+      - name: Start official database stack
+        run: |
+          app_password=$(openssl rand -hex 24)
+          echo "::add-mask::$app_password"
+          {
+            echo 'POSTGRES_USER=postgres'
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
+            echo 'POSTGRES_DB=library'
+            echo "LIBRARY_APP_PASSWORD=$app_password"
+            echo "LIBRARY_READONLY_PASSWORD=$(openssl rand -hex 24)"
+          } > database/.env
+          echo "DATABASE_URL=postgresql+psycopg://library_app:$app_password@127.0.0.1:5433/library" >> "$GITHUB_ENV"
+          docker compose -f database/compose.yml up -d --wait --wait-timeout 90
+          version=$(docker compose -f database/compose.yml exec -T db psql -U postgres -d library -Atc 'SHOW server_version_num')
+          test "$version" -ge 160000 && test "$version" -lt 170000
+      - name: Run live API tests over HTTPS
+        working-directory: backend
+        run: |
+          export SECRET_KEY=$(openssl rand -hex 32)
+          export CHAEKDAM_SEED_PASSWORD=$(sed -n 's/^.*: \([^ ]*\) *[(]bcrypt, cost.*$/\1/p' ../database/seed.sql)
+          test -n "$CHAEKDAM_SEED_PASSWORD"
+          export SSL_CERT_FILE="$RUNNER_TEMP/chaekdam.crt"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout "$RUNNER_TEMP/chaekdam.key" -out "$SSL_CERT_FILE" \
+            -subj '/CN=127.0.0.1' -addext 'subjectAltName=IP:127.0.0.1'
+          python -m uvicorn src.main:app --host 127.0.0.1 --port 8443 \
+            --ssl-keyfile "$RUNNER_TEMP/chaekdam.key" --ssl-certfile "$SSL_CERT_FILE" \
+            > "$RUNNER_TEMP/chaekdam-api.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          curl --silent --show-error --fail --retry 20 --retry-connrefused \
+            --cacert "$SSL_CERT_FILE" "$CHAEKDAM_INTEGRATION_URL/health"
+          python -m pytest tests/test_live_integration.py --junitxml="$RUNNER_TEMP/chaekdam-integration.xml"
+          python - "$RUNNER_TEMP/chaekdam-integration.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          cases = ET.parse(sys.argv[1]).findall(".//testcase")
+          if not cases or any(case.find("skipped") is not None for case in cases):
+              raise SystemExit("Every PostgreSQL integration test must run")
+          PY
+      - name: Capture service diagnostics
+        if: failure()
+        run: |
+          docker compose -f database/compose.yml logs db
+          if [ -f "$RUNNER_TEMP/chaekdam-api.log" ]; then cat "$RUNNER_TEMP/chaekdam-api.log"; fi
+      - name: Stop test stack
+        if: always()
+        run: |
+          if [ -f database/.env ]; then
+            docker compose -f database/compose.yml down --volumes
+          fi
