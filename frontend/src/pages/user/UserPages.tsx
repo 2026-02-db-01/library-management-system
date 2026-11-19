@@ -477,7 +477,254 @@ export function UserBooksPage() {
                   );
                 })}
               </div>
-              
+              <Notice tone="info">
+                도서 대출은 사서가 회원과 실물 소장본을 확인한 뒤 처리합니다.
+              </Notice>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </WorkspaceLayout>
+  );
+}
+
+export function UserLoansPage() {
+  const state = useLibraryStore();
+  const member = state.users.find((user) => user.userId === state.demoMemberId);
+  const memberLoans = state.loans.filter(
+    (loan) => loan.memberUserId === state.demoMemberId,
+  );
+  const current = memberLoans
+    .filter((loan) => !loan.isCancelled && loan.returnedAt === null)
+    .sort((a, b) => a.currentDueDate.localeCompare(b.currentDueDate));
+  const history = memberLoans
+    .filter((loan) => loan.returnedAt !== null)
+    .sort((a, b) => (b.returnedAt ?? "").localeCompare(a.returnedAt ?? ""));
+  const [result, setResult] = useState<ActionResult | null>(null);
+  const renewLoan = useLibraryStore((store) => store.renewLoan);
+  const recordDbFlowEvents = useLibraryStore(
+    (store) => store.recordDbFlowEvents,
+  );
+
+  useEffect(() => {
+    recordDbFlowEvents([
+      {
+        operation: "SELECT",
+        tableId: "app_user",
+        columnIds: ["user_id", "role", "account_status"],
+        message: "현재 로그인한 회원 계정을 확인합니다.",
+        status: "success",
+      },
+      {
+        operation: "SELECT",
+        tableId: "loan",
+        columnIds: [
+          "member_user_id",
+          "copy_id",
+          "borrowed_at",
+          "current_due_date",
+          "returned_at",
+        ],
+        relationId: "app_user-loan-member",
+        message: "회원 ID로 현재 대출과 과거 이력을 조회합니다.",
+        status: "success",
+      },
+      {
+        operation: "SELECT",
+        tableId: "loan_renewal",
+        columnIds: ["loan_id", "previous_due_date", "new_due_date"],
+        relationId: "loan-loan_renewal",
+        message: "대출 연장 이력을 연결해 남은 연장 가능 여부를 확인합니다.",
+        status: "success",
+      },
+    ]);
+  }, [recordDbFlowEvents, state.demoMemberId]);
+
+  function titleFor(loan: Loan) {
+    return getBookForCopy(loan.copyId, state)?.title ?? "도서 정보 없음";
+  }
+
+  function copyFor(loan: Loan) {
+    return (
+      state.copies.find((copy) => copy.copyId === loan.copyId)?.copyCode ?? "—"
+    );
+  }
+
+  return (
+    <WorkspaceLayout section="user">
+      <PageHeading
+        eyebrow="USER SERVICE · MY ACTIVITY"
+        title="내 대출 현황"
+        description="현재 로그인한 회원의 대출과 과거 이용 기록을 확인합니다."
+      />
+      
+      {member && (
+        <div className="member-context-line">
+          <span className="member-avatar">
+            {(member.fullName ?? "—").slice(0, 1)}
+          </span>
+          <span>
+            <strong>{member.fullName}</strong>
+            <small>
+              회원 ID {member.userId} ·{" "}
+              {member.accountStatus === "ACTIVE" ? "활성 계정" : "비활성 계정"}
+            </small>
+          </span>
+          <Badge tone={member.accountStatus === "ACTIVE" ? "green" : "neutral"}>
+            {member.accountStatus === "ACTIVE" ? "이용 중" : "비활성"}
+          </Badge>
+        </div>
+      )}
+      {member?.borrowingSuspendedUntil && (
+        <Notice tone="warning" title="연체 반납 후 신규 대출 정지">
+          종료시각:{" "}
+          {new Date(member.borrowingSuspendedUntil).toLocaleString("ko-KR")} ·
+          기존 대출 연장은 현재 연체 여부에 따라 판단합니다.
+        </Notice>
+      )}
+      {result && <ResultMessage message={result.message} error={!result.ok} />}
+      <div className="loan-section-grid">
+        <section className="user-loan-section">
+          <SectionHeading
+            title="현재 대출"
+            description="미반납 상태의 실물 소장본"
+          />
+          {current.length > 0 ? (
+            current.map((loan) => {
+              const overdue = isOverdue(loan);
+              const book = getBookForCopy(loan.copyId, state);
+              const eligible =
+                member?.accountStatus === "ACTIVE" &&
+                canRenew(loan, state.renewals) &&
+                !state.loans.some(
+                  (other) =>
+                    other.memberUserId === state.demoMemberId &&
+                    isOverdue(other),
+                );
+              return (
+                <Card
+                  className={`current-loan-card ${overdue ? "is-overdue" : ""}`}
+                  key={loan.loanId}
+                >
+                  <div className="current-loan-icon">
+                    <BookMarked size={19} />
+                  </div>
+                  <div className="current-loan-main">
+                    <span className="eyebrow">LOAN #{loan.loanId}</span>
+                    <h3>{titleFor(loan)}</h3>
+                    <p>
+                      {book
+                        ? getAuthorsForBook(book.bookId, state)
+                            .map((author) => author.authorName)
+                            .join(", ")
+                        : "저자 정보 없음"}
+                    </p>
+                    <span className="copy-code-line">
+                      소장본 {copyFor(loan)}
+                    </span>
+                  </div>
+                  <div className="current-loan-dates">
+                    <span>
+                      <CalendarDays size={14} /> 대출일{" "}
+                      <strong>{formatDate(loan.borrowedAt)}</strong>
+                    </span>
+                    <span>
+                      <Clock3 size={14} /> 반납 예정{" "}
+                      <strong>{formatDate(loan.currentDueDate)}</strong>
+                    </span>
+                    <Badge tone={overdue ? "red" : "green"}>
+                      {overdue ? `연체 ${getOverdueDays(loan)}일` : "대출 중"}
+                    </Badge>
+                    <div className="renewal-action-group">
+                      <Button
+                        variant="secondary"
+                        disabled={!eligible}
+                        onClick={async () =>
+                          setResult(await renewLoan(loan.loanId, state.demoMemberId))
+                        }
+                        icon={<CalendarClock size={14} />}
+                      >
+                        {eligible
+                          ? "7일 연장"
+                          : overdue
+                            ? "연체로 연장 불가"
+                            : "연장 완료"}
+                      </Button>
+
+                    </div>
+                  </div>
+                </Card>
+              );
+            })
+          ) : (
+            <Card>
+              <EmptyState
+                title="현재 대출 중인 도서가 없습니다"
+                description="대출은 사서 데스크에서 처리할 수 있습니다."
+                action={
+                  <Link
+                    className="button button-secondary"
+                    to="/librarian/checkout"
+                  >
+                    사서 화면 보기
+                  </Link>
+                }
+              />
+            </Card>
+          )}
+        </section>
+        <section className="user-loan-section">
+          <SectionHeading
+            title="이용 이력"
+            description="반납 완료된 대출 기록"
+          />
+          <Card className="table-card loan-history-card">
+            <DataTable
+              rows={history}
+              getRowKey={(loan) => loan.loanId}
+              emptyMessage="아직 완료된 대출 이력이 없습니다."
+              columns={[
+                {
+                  key: "book",
+                  title: "도서",
+                  render: (loan) => (
+                    <span className="table-title-cell">
+                      <strong>{titleFor(loan)}</strong>
+                      <small>{copyFor(loan)}</small>
+                      <Badge
+                        tone={getOverdueDays(loan) > 0 ? "amber" : "green"}
+                      >
+                        {getOverdueDays(loan) > 0
+                          ? `반납 시 연체 ${getOverdueDays(loan)}일`
+                          : "정상 반납"}
+                      </Badge>
+                    </span>
+                  ),
+                },
+                {
+                  key: "borrowed",
+                  title: "대출일",
+                  render: (loan) => formatDate(loan.borrowedAt),
+                },
+                {
+                  key: "due",
+                  title: "반납 예정",
+                  render: (loan) => formatDate(loan.currentDueDate),
+                },
+                {
+                  key: "returned",
+                  title: "반납일",
+                  render: (loan) => formatDate(loan.returnedAt),
+                },
+              ]}
+            />
+          </Card>
+        </section>
+      </div>
+      <Notice tone="info" title="연장 처리 안내">
+        본인 계정의 미반납·비연체 대출만 한 번, 현재 기한에서 7일 연장할 수
+        있습니다.
+      </Notice>
     </WorkspaceLayout>
   );
 }
