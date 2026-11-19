@@ -100,7 +100,7 @@ class StaffCreateRequest(CamelModel):
     full_name: str = Field(min_length=1, max_length=100)
     contact: str = Field(min_length=10, max_length=20)
     role: Literal["LIBRARIAN", "ADMIN"]
-    password: str = Field(default="staff1234", min_length=1, max_length=128)
+    password: str = Field(min_length=12, max_length=128)
 
     @field_validator("login_id")
     @classmethod
