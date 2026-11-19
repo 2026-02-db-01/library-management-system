@@ -6,6 +6,8 @@ export async function installApiFixture(page: Page) {
   const data = createSeedData();
   let identity: number | null = null;
   let renewalError = false;
+  let dropCheckoutResponse = false;
+  const completedCheckouts = new Map<string, { message: string; loanId: number }>();
   let logoutError = false;
   let unavailable = false;
   const requests: { path: string; body: Record<string, unknown> }[] = [];
@@ -79,11 +81,21 @@ export async function installApiFixture(page: Page) {
     }
     if (path === "/loans/checkout") {
       if (actor.role !== "LIBRARIAN") return error(403, "사서 전용");
+      const { requestId, ...payload } = body;
+      const key = JSON.stringify([actor.userId, requestId, payload]);
+      const previous = requestId && completedCheckouts.get(key);
+      if (previous) return ok(previous.message, previous.loanId);
       const due = addDays(getKoreanDate(), 14);
       data.loans.push({ loanId: 9999, copyId: body.copyId, memberUserId: body.memberUserId,
         checkedOutByUserId: actor.userId, borrowedAt: new Date().toISOString(), initialDueDate: due,
         currentDueDate: due, returnedAt: null, returnedByUserId: null, isCancelled: false, cancelledAt: null });
-      return ok("대출 완료 · 반납예정일 " + due, 9999);
+      const result = { message: "대출 완료 · 반납예정일 " + due, loanId: 9999 };
+      if (requestId) completedCheckouts.set(key, result);
+      if (dropCheckoutResponse) {
+        dropCheckoutResponse = false;
+        return route.abort("connectionreset");
+      }
+      return ok(result.message, result.loanId);
     }
     const loan = data.loans.find((item) => item.loanId === Number(path.split("/")[2]));
     if (loan && path.endsWith("/renew")) {
@@ -110,6 +122,7 @@ export async function installApiFixture(page: Page) {
     setRole(role: UserRole, userId?: number) {
       identity = userId ?? data.users.find((user) => user.role === role && user.accountStatus === "ACTIVE")?.userId ?? null;
     },
+    loseNextCheckoutResponse() { dropCheckoutResponse = true; },
     failRenewal(value: boolean) { renewalError = value; },
     failLogout(value: boolean) { logoutError = value; },
     authUnavailable() { unavailable = true; },

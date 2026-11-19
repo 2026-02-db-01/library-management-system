@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { AuthenticatedUser } from "../api/auth-contract";
 import { httpAuthTransport } from "../api/http-auth";
 import { ApiError } from "../api/client";
-import { libraryApi } from "../api/library-api";
+import { libraryApi, type ActionResult as ApiActionResult } from "../api/library-api";
 import type {
   BookCopy,
   BookFormValues,
@@ -17,6 +17,7 @@ export interface ActionResult {
   ok: boolean;
   message: string;
   loanId?: number;
+  retryable?: boolean;
 }
 
 export interface RequestOptions {
@@ -123,30 +124,42 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
   // A definitive response (success or client rejection) ends that attempt.
   const pendingRequests = new Map<string, string>();
 
-  async function withRequestId<T>(
+  class UncertainMutationError extends Error {}
+
+  async function withRequestId(
     operation: string,
     payload: unknown[],
     explicitId: string | undefined,
-    send: (requestId: string) => Promise<T>,
-  ): Promise<T> {
-    if (explicitId) return send(explicitId);
+    send: (requestId: string) => Promise<ApiActionResult>,
+  ): Promise<ApiActionResult> {
+    const session = sessionVersion;
     const key = JSON.stringify([operation, ...payload]);
-    let requestId = pendingRequests.get(key);
+    let requestId = explicitId ?? pendingRequests.get(key);
     if (!requestId) {
       requestId = crypto.randomUUID();
       pendingRequests.set(key, requestId);
     }
-    try {
-      const result = await send(requestId);
-      pendingRequests.delete(key);
-      return result;
-    } catch (error) {
-      // Network failures and 5xx responses may arrive after a DB commit.
-      // A 4xx response is definitive; a later explicit attempt must use a new ID.
-      if (error instanceof ApiError && error.status < 500) {
+    function finishAttempt() {
+      if (session === sessionVersion && pendingRequests.get(key) === requestId) {
         pendingRequests.delete(key);
       }
-      throw error;
+    }
+
+    try {
+      const result = await send(requestId);
+      if (!result || typeof result.ok !== "boolean" || typeof result.message !== "string") {
+        throw new Error("Invalid mutation response");
+      }
+      if (session !== sessionVersion) throw new Error("로그인 세션이 변경되었습니다.");
+      finishAttempt();
+      return result;
+    } catch (error) {
+      if (session !== sessionVersion) throw error;
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+        finishAttempt();
+        throw error;
+      }
+      throw new UncertainMutationError("처리 결과를 확인하지 못했습니다. 같은 입력으로 다시 시도하면 기존 요청의 결과를 확인합니다.");
     }
   }
 
@@ -169,6 +182,9 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
           (error.status === 401 || error.code === "INACTIVE_USER")) {
         replaceSession(null);
       }
+      if (error instanceof UncertainMutationError) {
+        return { ...fail(error.message), retryable: true };
+      }
       return fail(error instanceof Error ? error.message : "요청 처리에 실패했습니다.");
     }
   }
@@ -189,17 +205,18 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
 
     syncState: async () => {
       const refresh = ++refreshVersion;
-      const session = sessionVersion;
+      let session = sessionVersion;
       const isCurrent = () => refresh === refreshVersion && session === sessionVersion;
       try {
         const user = await httpAuthTransport.currentUser();
         if (!isCurrent()) return;
         if (user?.userId !== get().currentUser?.userId ||
             user?.role !== get().currentUser?.role) {
-          pendingRequests.clear();
-          set({ ...emptyData, dbFlowEvents: [], hasLoadedData: false });
+          replaceSession(user);
+          session = sessionVersion;
+        } else {
+          set({ currentUser: user });
         }
-        set({ currentUser: user });
         if (!user) {
           set({ dataError: "" });
           return;
@@ -222,12 +239,13 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
     },
 
     logout: async () => {
+      const session = sessionVersion;
       try {
         await httpAuthTransport.logout();
       } catch (error) {
         if (!(error instanceof ApiError && error.status === 401)) throw error;
       }
-      replaceSession(null);
+      if (session === sessionVersion) replaceSession(null);
     },
 
     clearDbFlowEvents: () => set({ dbFlowEvents: [] }),
@@ -241,6 +259,7 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
             options.requestId,
             (requestId) => libraryApi.checkout(memberId, copyId, requestId),
           );
+          if (!res.ok) return fail(res.message);
           if (Array.isArray(res.dbFlowEvents) && res.dbFlowEvents.length > 0) {
             set((s) => ({
               dbFlowEvents: [
@@ -264,6 +283,7 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
             options.requestId,
             (requestId) => libraryApi.returnLoan(loanId, damaged, reason, requestId),
           );
+          if (!res.ok) return fail(res.message);
           if (Array.isArray(res.dbFlowEvents) && res.dbFlowEvents.length > 0) {
             set((s) => ({
               dbFlowEvents: [
@@ -285,6 +305,7 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
             options.requestId,
             (requestId) => libraryApi.renewLoan(loanId, requestId),
           );
+          if (!res.ok) return fail(res.message);
           if (Array.isArray(res.dbFlowEvents) && res.dbFlowEvents.length > 0) {
             set((s) => ({
               dbFlowEvents: [
@@ -302,10 +323,11 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
         async () => {
           const res = await withRequestId(
             "correct",
-            [loanId, input],
+            [loanId, input.type, input.reason, input.evidence, input.value, input.physicalConfirmed],
             options.requestId,
             (requestId) => libraryApi.correctLoan(loanId, { ...input, requestId }),
           );
+          if (!res.ok) return fail(res.message);
           if (Array.isArray(res.dbFlowEvents) && res.dbFlowEvents.length > 0) {
             set((s) => ({
               dbFlowEvents: [

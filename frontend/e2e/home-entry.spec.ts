@@ -111,23 +111,40 @@ test("homepage login keeps credentials out of storage and failed logout preserve
   await expect(page).toHaveURL(/\/login\?next=/);
 });
 
-
-test("failed initial state fetch never renders fake zero metrics and can retry", async ({ page }) => {
+test("state fetch failure does not render zero metrics", async ({ page }) => {
   const api = await installApiFixture(page);
   api.setRole("ADMIN");
-  let unavailable = true;
-  await page.route("**/api/v1/library/state", async (route) => {
-    if (unavailable) {
-      await route.fulfill({ status: 503, json: { message: "DB 일시 장애" } });
-    } else {
-      await route.fallback();
-    }
-  });
+  await page.route("**/api/v1/library/state", route => route.fulfill({
+    status: 503, json: { message: "DB 일시 장애" },
+  }));
   await page.goto("/admin");
   await expect(page.getByRole("heading", { name: "업무 데이터를 불러오지 못했습니다." })).toBeVisible();
-  await expect(page.getByText("실제 회원·도서·대출 건수가 0이라는 뜻이 아닙니다.", { exact: false })).toBeVisible();
-  unavailable = false;
+  await expect(page.locator(".metric-grid")).toHaveCount(0);
+  await expect(page.getByRole("main").getByText("DB 일시 장애")).toBeVisible();
+});
+
+test("retry restores the actual dashboard", async ({ page }) => {
+  const api = await installApiFixture(page);
+  api.setRole("ADMIN");
+  await page.route("**/api/v1/library/state", route => route.abort("connectionfailed"), { times: 1 });
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: "업무 데이터를 불러오지 못했습니다." })).toBeVisible();
+  await expect(page.locator(".metric-grid")).toHaveCount(0);
   await page.getByRole("button", { name: "다시 시도" }).click();
-  await expect(page.getByRole("heading", { name: "업무 데이터를 불러오지 못했습니다." })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "관리자 대시보드" })).toBeVisible();
+  await expect(page).toHaveURL("/admin");
+  await expect(page.getByRole("heading", { name: "관리자 대시보드", level: 1 })).toBeVisible();
+  await expect(page.locator(".metric-grid").getByText(String(api.data.books.length), { exact: true }).first()).toBeVisible();
+});
+
+test("session expiration clears protected data and redirects to login", async ({ page }) => {
+  const api = await installApiFixture(page);
+  api.setRole("ADMIN");
+  await page.goto("/admin");
+  await expect(page.locator(".metric-grid")).toBeVisible();
+  await page.route("**/api/v1/library/state", route => route.fulfill({
+    status: 401, json: { message: "세션이 만료되었습니다." },
+  }));
+  await page.getByRole("banner").getByRole("button", { name: "새로고침", exact: true }).click();
+  await expect(page).toHaveURL(/\/login\?next=%2Fadmin/);
+  await expect(page.locator(".metric-grid")).toHaveCount(0);
 });

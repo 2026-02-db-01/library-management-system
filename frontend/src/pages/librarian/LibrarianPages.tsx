@@ -559,7 +559,10 @@ export function LibrarianCheckoutPage() {
           <Field label="실물 소장본">
             <select
               value={activeCopyId}
-              onChange={(event) => setCopyId(Number(event.target.value))}
+              onChange={(event) => {
+                setCopyId(Number(event.target.value));
+                setResult(null);
+              }}
               disabled={availableCopies.length === 0}
             >
               {availableCopies.length === 0 ? (
@@ -620,7 +623,7 @@ export function LibrarianCheckoutPage() {
             onClick={handleCheckout}
             icon={<BookOpenCheck size={16} />}
           >
-            {busy ? "처리 중…" : "대출 처리"}
+            {busy ? "처리 중…" : result?.retryable ? "기존 대출 요청 다시 시도" : "대출 처리"}
           </Button>
           <p className="muted-small">
             대출 처리 사서: {librarian?.fullName ?? "선택 없음"} · PostgreSQL DB 반영

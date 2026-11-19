@@ -18,9 +18,12 @@ export async function apiRequest<T>(
     headers.set('Content-Type', 'application/json')
   }
 
+  const timeout = AbortSignal.timeout(15_000)
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout
   const response = await fetch(path, {
     ...options,
     headers,
+    signal,
     credentials: 'include',
   })
 

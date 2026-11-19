@@ -113,10 +113,10 @@ export function AppShell() {
     } catch {
       return;
     }
+    if (role && !useLibraryStore.getState().currentUser) return;
     setFlowOpen(false);
     setMobileFlowTab("work");
-    navigate("/");
-    setNotice("서버 DB의 최신 상태로 동기화했습니다.");
+    setNotice("최신 상태를 불러왔습니다.");
     window.setTimeout(() => setNotice(""), 3500);
   }
 

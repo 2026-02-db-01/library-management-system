@@ -25,7 +25,8 @@ function mockJsonResponse(body: unknown, status = 200) {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await s().setCurrentUser(null);
   vi.useRealTimers();
   const seed = createSeedData();
 
@@ -82,14 +83,14 @@ describe("API-connected libraryStore", () => {
   });
 
   it("executes checkout via backend API and syncs store state", async () => {
-    await s().initialize();
+    await s().syncState();
     const res = await s().checkout(1001, 5001, 2001);
     expect(res.ok).toBe(true);
     expect(res.loanId).toBe(9901);
   });
 
   it("keeps state and reports server conflict without fabricating a rollback", async () => {
-    await s().initialize();
+    await s().syncState();
     s().clearDbFlowEvents();
     const loans = s().loans;
     const res = await s().returnLoan(9001, 2001);
@@ -100,48 +101,135 @@ describe("API-connected libraryStore", () => {
   });
 });
 
-  describe("pending mutation requests", () => {
-    it("reuses the UUID after a lost response, then uses a fresh UUID for a new action", async () => {
-      await s().setCurrentUser(null);
-      await s().syncState();
-      const originalFetch = globalThis.fetch;
-      const ids: string[] = [];
-      let dropFirstResponse = true;
-      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        if (String(input).endsWith("/api/v1/loans/checkout")) {
-          const body = JSON.parse(String(init?.body)) as { requestId: string };
-          ids.push(body.requestId);
-          if (dropFirstResponse) {
-            dropFirstResponse = false;
-            return Promise.reject(new TypeError("Network response was lost"));
-          }
-        }
-        return originalFetch(input, init);
-      }));
-      expect((await s().checkout(1001, 5001, 2001)).ok).toBe(false);
-      expect((await s().checkout(1001, 5001, 2001)).ok).toBe(true);
-      expect((await s().checkout(1001, 5001, 2001)).ok).toBe(true);
-      expect(ids).toHaveLength(3);
-      expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/i);
-      expect(ids[1]).toBe(ids[0]);
-      expect(ids[2]).not.toBe(ids[0]);
-    });
+describe("pending mutation requests", () => {
+  function interceptLoans(respond: (path: string, body: Record<string, unknown>) => Promise<unknown>) {
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/v1/loans/")) {
+        return respond(path, JSON.parse(String(init?.body)));
+      }
+      return originalFetch(input, init);
+    }));
+  }
 
-    it("does not treat a failed initial state request as an empty library", async () => {
-      await s().setCurrentUser(null);
-      const originalFetch = globalThis.fetch;
-      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        if (String(input).endsWith("/api/v1/library/state")) {
-          return Promise.resolve(mockJsonResponse({ message: "DB 일시 장애" }, 503));
-        }
-        return originalFetch(input, init);
-      }));
-      await expect(s().syncState()).rejects.toThrow("DB 일시 장애");
-      expect(s().currentUser?.role).toBe("LIBRARIAN");
-      expect(s().hasLoadedData).toBe(false);
-      expect(s().dataError).toContain("DB 일시 장애");
+  const accepted = () => Promise.resolve(mockJsonResponse({ ok: true, message: "?? ??" }));
+
+  it("retry reuses request ID after lost response", async () => {
+    await s().syncState();
+    const committed = new Set<unknown>();
+    const ids: unknown[] = [];
+    interceptLoans((_path, body) => {
+      ids.push(body.requestId);
+      if (committed.has(body.requestId)) return accepted();
+      committed.add(body.requestId);
+      return Promise.reject(new TypeError("Network response was lost"));
     });
+    expect(await s().checkout(1001, 5001, 2001)).toMatchObject({ ok: false, retryable: true });
+    expect(ids).toHaveLength(1);
+    expect((await s().checkout(1001, 5001, 2001)).ok).toBe(true);
+    expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(ids).toEqual([ids[0], ids[0]]);
+    expect(committed.size).toBe(1);
   });
+
+  it("successful mutation clears pending request ID", async () => {
+    await s().syncState();
+    const ids: unknown[] = [];
+    interceptLoans((_path, body) => {
+      ids.push(body.requestId);
+      return accepted();
+    });
+    expect((await s().checkout(1001, 5001, 2001)).ok).toBe(true);
+    expect((await s().checkout(1001, 5001, 2001)).ok).toBe(true);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it("changed mutation payload gets new request ID", async () => {
+    await s().syncState();
+    const ids: unknown[] = [];
+    interceptLoans((_path, body) => {
+      ids.push(body.requestId);
+      return Promise.resolve(mockJsonResponse({}, 503));
+    });
+    await s().checkout(1001, 5001, 2001);
+    await s().checkout(1001, 5002, 2001);
+    await s().checkout(1002, 5001, 2001);
+    await s().checkout(1001, 5001, 2001);
+    expect(new Set(ids.slice(0, 3)).size).toBe(3);
+    expect(ids[3]).toBe(ids[0]);
+  });
+
+  it("session change clears pending requests and isolates late responses", async () => {
+    await s().syncState();
+    const ids: unknown[] = [];
+    let completeOld: ((value: unknown) => void) | undefined;
+    interceptLoans((_path, body) => {
+      ids.push(body.requestId);
+      if (ids.length === 1) {
+        return new Promise((resolve) => { completeOld = resolve; });
+      }
+      if (ids.length === 2) return Promise.reject(new Error("Offline"));
+      return accepted();
+    });
+    const oldRequest = s().checkout(1001, 5001, 2001);
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/auth/me")
+        ? Promise.resolve(mockJsonResponse({ ...s().currentUser, userId: 2002 }))
+        : originalFetch(input, init)
+    ));
+    await s().syncState();
+    expect(s().currentUser?.userId).toBe(2002);
+    await s().checkout(1001, 5001, 2002);
+    completeOld?.(mockJsonResponse({ ok: true, message: "old", dbFlowEvents: [{ id: "old" }] }));
+    expect((await oldRequest).ok).toBe(false);
+    expect(s().dbFlowEvents).toEqual([]);
+    expect((await s().checkout(1001, 5001, 2002)).ok).toBe(true);
+    expect(ids[1]).not.toBe(ids[0]);
+    expect(ids[2]).toBe(ids[1]);
+  });
+
+  it("return renewal correction honor request IDs", async () => {
+    await s().syncState();
+    const ids = new Map<string, unknown[]>();
+    interceptLoans((path, body) => {
+      const attempts = [...(ids.get(path) ?? []), body.requestId];
+      ids.set(path, attempts);
+      if (attempts.length === 1) return Promise.resolve(mockJsonResponse({}, 408));
+      if (attempts.length === 2) return Promise.resolve(mockJsonResponse({ message: "conflict" }, 409));
+      return accepted();
+    });
+    const operations = [
+      () => s().returnLoan(9001, 2001, { damaged: true, reason: "QA" }),
+      () => s().renewLoan(9001, 1001),
+      () => s().correctLoan(9001, { type: "UNDO_RETURN", reason: "QA", physicalConfirmed: true }),
+    ];
+    for (const operation of operations) {
+      expect(await operation()).toMatchObject({ ok: false, retryable: true });
+      expect(await operation()).toMatchObject({ ok: false, message: "conflict" });
+      expect((await operation()).ok).toBe(true);
+    }
+    expect(ids.size).toBe(3);
+    for (const attempts of ids.values()) {
+      expect(attempts).toHaveLength(3);
+      expect(attempts[1]).toBe(attempts[0]);
+      expect(attempts[2]).not.toBe(attempts[0]);
+    }
+  });
+
+  it("session expiration clears protected data", async () => {
+    await s().syncState();
+    expect(s().books.length).toBeGreaterThan(0);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockJsonResponse({}, 401)));
+    await s().syncState();
+    expect(s().currentUser).toBeNull();
+    expect(s().hasLoadedData).toBe(false);
+    expect(s().books).toEqual([]);
+    expect(s().loans).toEqual([]);
+  });
+});
 
 describe("domain helpers, metadata and privacy", () => {
   it("normalizes ISBN-10 to ISBN-13 and rejects invalid check digits", () => {
