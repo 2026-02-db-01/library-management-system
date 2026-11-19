@@ -21,7 +21,6 @@ export function AuthForm({ signup }: { signup: boolean }) {
   const [visible, setVisible] = useState(false);
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const requestRoleSwitch = useLibraryStore((state) => state.requestRoleSwitch);
   const setCurrentUser = useLibraryStore((state) => state.setCurrentUser);
 
   async function submit(event: FormEvent) {
@@ -49,6 +48,9 @@ export function AuthForm({ signup }: { signup: boolean }) {
           password: values.password,
         });
         await setCurrentUser(user);
+        if (useLibraryStore.getState().currentUser?.userId !== user.userId) {
+          throw new Error("로그인 세션을 확인할 수 없습니다.");
+        }
 
         const defaultPath =
           user.role === "MEMBER"
@@ -57,6 +59,7 @@ export function AuthForm({ signup }: { signup: boolean }) {
               ? "/librarian"
               : "/admin";
         const requested = params.get("next");
+        const requestedPath = requested?.split(/[?#]/, 1)[0];
         const allowedPrefix =
           user.role === "MEMBER"
             ? "/user/"
@@ -65,17 +68,16 @@ export function AuthForm({ signup }: { signup: boolean }) {
               : "/admin";
         const destination =
           requested &&
-          (requested === "/account" ||
-            requested === allowedPrefix ||
-            requested.startsWith(
-              allowedPrefix + (allowedPrefix.endsWith("/") ? "" : "/"),
-            ) ||
-            requested.startsWith(allowedPrefix + "?")) &&
+          requestedPath &&
+          (requestedPath === "/account" ||
+            requestedPath === allowedPrefix ||
+            requestedPath.startsWith(allowedPrefix.endsWith("/") ? allowedPrefix : allowedPrefix + "/")) &&
+          !requestedPath.split("/").some((part) => part === ".." || part === ".") &&
+          !/[\\%]/.test(requestedPath) &&
           !requested.startsWith("//")
             ? requested
             : defaultPath;
 
-        requestRoleSwitch(user.role, destination.split("?")[0]);
         setValues(empty);
         navigate(destination);
       }
@@ -174,11 +176,6 @@ export function AuthForm({ signup }: { signup: boolean }) {
           <Link to="/signup">계정이 없나요? 회원가입</Link>
         )}
       </p>
-      {!signup && (
-        <p className="mock-login-note">
-          사서(librarian) · 관리자(admin) 또는 가입한 회원 계정으로 로그인합니다.
-        </p>
-      )}
     </>
   );
 }

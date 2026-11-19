@@ -1,7 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
-import { Badge } from "../ui/Primitives";
 
 export type WorkspaceKey = "user" | "librarian" | "admin" | "console";
 
@@ -103,10 +102,6 @@ export function WorkspaceLayout({
             </NavLink>
           ))}
         </nav>
-        <div className="sidebar-footer">
-          <Badge tone="blue">DEMO DATA</Badge>
-          <p>화면의 변경은 브라우저 내 데모 상태에만 반영됩니다.</p>
-        </div>
       </aside>
       <main className="workspace-content" key={location.pathname}>
         {children}

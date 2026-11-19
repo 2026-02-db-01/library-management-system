@@ -1,4 +1,4 @@
-﻿import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import {
   Bar,
   BarChart,
@@ -45,7 +45,7 @@ import {
   SectionHeading,
   SearchField,
 } from "../../components/ui/Primitives";
-import { getKoreanDate } from "../../data/mock/seed";
+import { getKoreanDate } from "../../services/korean-date";
 import {
   deriveLoanCounts,
   getAvailability,
@@ -65,7 +65,7 @@ function useAdminData() {
       copies: state.copies,
       loans: state.loans,
       renewals: state.renewals,
-      demoRole: state.demoRole,
+      role: state.currentUser?.role,
     })),
   );
 }
@@ -127,7 +127,7 @@ export function AdminDashboardPage() {
 
   return (
     <WorkspaceLayout
-      section={data.demoRole === "LIBRARIAN" ? "librarian" : "admin"}
+      section={data.role === "LIBRARIAN" ? "librarian" : "admin"}
     >
       <PageHeading
         eyebrow="ADMINISTRATION · OVERVIEW"
@@ -260,7 +260,7 @@ export function AdminBooksPage() {
     .filter((book) => {
       if (!matchesCatalogFilters(book, data, filters)) return false;
       if (
-        data.demoRole !== "LIBRARIAN" &&
+        data.role !== "LIBRARIAN" &&
         !data.copies.some(
           (c) => c.bookId === book.bookId && c.managementStatus !== "RETIRED",
         )
@@ -280,14 +280,14 @@ export function AdminBooksPage() {
 
   return (
     <WorkspaceLayout
-      section={data.demoRole === "LIBRARIAN" ? "librarian" : "admin"}
+      section={data.role === "LIBRARIAN" ? "librarian" : "admin"}
     >
       <PageHeading
         eyebrow="ADMINISTRATION · CATALOG"
         title="도서 관리"
         description="ISBN 기반 서지정보와 저자 연결, 개별 실물 소장본을 관리합니다."
         actions={
-          data.demoRole === "LIBRARIAN" && (
+          data.role === "LIBRARIAN" && (
             <Button
               onClick={() => {
                 setShowCreate(true);
@@ -379,7 +379,7 @@ export function AdminBooksPage() {
               key: "actions",
               title: "관리",
               render: (book) =>
-                data.demoRole === "LIBRARIAN" ? (
+                data.role === "LIBRARIAN" ? (
                   <Button onClick={() => setEditingBookId(book.bookId)}>
                     정보·소장본
                   </Button>
@@ -397,8 +397,7 @@ export function AdminBooksPage() {
       </Card>
       <Notice tone="info" title="삭제 제한">
         서지정보는 보존하며 제적은 소장본에만 적용합니다. ISBN은 선택 입력이며
-        ISBN-10/13을 검증합니다. 분류 코드는 합성 데모용이며 실제 목록은
-        미확정입니다.
+        ISBN-10/13을 검증합니다.
       </Notice>
       {showCreate && (
         <BookEditorModal
@@ -413,7 +412,7 @@ export function AdminBooksPage() {
           }}
         />
       )}
-      {editingBook && data.demoRole !== "LIBRARIAN" && (
+      {editingBook && data.role !== "LIBRARIAN" && (
         <Modal title={editingBook.title} onClose={() => setEditingBookId(null)}>
           <p>
             {getAuthorsForBook(editingBook.bookId, data)
@@ -426,7 +425,7 @@ export function AdminBooksPage() {
             {editingBook.publicationYear ?? "발행연도 미상"}
           </p>
           <p>
-            분류: 합성 데모 일반 · 전체 소장본{" "}
+            분류: {editingBook.categoryCode} · 전체 소장본{" "}
             {getAvailability(editingBook.bookId, data).total}권 / 대출 가능{" "}
             {getAvailability(editingBook.bookId, data).available}권
           </p>
@@ -444,7 +443,7 @@ export function AdminBooksPage() {
           />
         </Modal>
       )}
-      {editingBook && data.demoRole === "LIBRARIAN" && (
+      {editingBook && data.role === "LIBRARIAN" && (
         <BookEditorModal
           key={`edit-${editingBook.bookId}`}
           book={editingBook}
@@ -572,7 +571,7 @@ function BookEditorModal({
               />
             </Field>
           </div>
-          <Field label="분류 · 임시 데모 코드">
+          <Field label="분류 코드">
             <input value={values.categoryCode} readOnly />
           </Field>
           <label>
@@ -762,7 +761,7 @@ export function AdminAuthorsPage() {
 
   return (
     <WorkspaceLayout
-      section={data.demoRole === "LIBRARIAN" ? "librarian" : "admin"}
+      section={data.role === "LIBRARIAN" ? "librarian" : "admin"}
     >
       <PageHeading
         eyebrow="ADMINISTRATION · AUTHORS"
@@ -772,7 +771,7 @@ export function AdminAuthorsPage() {
       />
       {result && <ResultMessage message={result.message} error={!result.ok} />}
       <form
-        hidden={data.demoRole !== "LIBRARIAN"}
+        hidden={data.role !== "LIBRARIAN"}
         className="author-create-form"
         onSubmit={submitAuthor}
       >
@@ -851,7 +850,7 @@ export function AdminAuthorsPage() {
               title: "관리",
               render: (author) => (
                 <Button
-                  disabled={data.demoRole !== "LIBRARIAN"}
+                  disabled={data.role !== "LIBRARIAN"}
                   variant="secondary"
                   onClick={() => {
                     setEditingAuthor(author);
@@ -938,7 +937,7 @@ export function AdminStatisticsPage() {
 
   return (
     <WorkspaceLayout
-      section={data.demoRole === "LIBRARIAN" ? "librarian" : "admin"}
+      section={data.role === "LIBRARIAN" ? "librarian" : "admin"}
     >
       <PageHeading
         eyebrow="ADMINISTRATION · ANALYTICS"

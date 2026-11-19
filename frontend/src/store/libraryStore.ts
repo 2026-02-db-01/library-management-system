@@ -1,13 +1,13 @@
-﻿import { create } from "zustand";
+import { create } from "zustand";
 import type { AuthenticatedUser } from "../api/auth-contract";
 import { httpAuthTransport } from "../api/http-auth";
+import { ApiError } from "../api/client";
 import { libraryApi } from "../api/library-api";
 import type {
   BookCopy,
   BookFormValues,
   CorrectionType,
   DbFlowEvent,
-  DbFlowEventDraft,
   LibraryData,
   RecordStatus,
   UserRole,
@@ -41,22 +41,12 @@ interface AccountInput {
 interface LibraryStore extends LibraryData {
   currentUser: AuthenticatedUser | null;
   isInitialized: boolean;
-  isLoading: boolean;
-  demoRole: UserRole | null;
-  roleSwitchTarget: string | null;
-  demoMemberId: number;
-  demoLibrarianId: number;
-  demoAdminId: number;
+  dataError: string;
+  logout: () => Promise<void>;
   dbFlowEvents: DbFlowEvent[];
   initialize: () => Promise<void>;
   syncState: () => Promise<void>;
   setCurrentUser: (user: AuthenticatedUser | null) => Promise<void>;
-  requestRoleSwitch: (role: UserRole, target: string) => void;
-  completeRoleSwitch: () => void;
-  setDemoMember: (id: number) => void;
-  setDemoLibrarian: (id: number) => void;
-  setDemoAdmin: (id: number) => void;
-  recordDbFlowEvents: (events: DbFlowEventDraft[]) => void;
   clearDbFlowEvents: () => void;
   checkout: (
     member: number,
@@ -72,7 +62,6 @@ interface LibraryStore extends LibraryData {
   renewLoan: (
     loan: number,
     member: number,
-    failure?: boolean,
     options?: RequestOptions,
   ) => Promise<ActionResult>;
   correctLoan: (
@@ -84,24 +73,20 @@ interface LibraryStore extends LibraryData {
   setUserRole: (id: number, role: UserRole) => Promise<ActionResult>;
   addAuthor: (name: string) => Promise<ActionResult>;
   renameAuthor: (id: number, name: string) => Promise<ActionResult>;
-  addMember: (v: AccountInput) => Promise<ActionResult>;
-  addStaff: (v: AccountInput & { role: "LIBRARIAN" | "ADMIN" }) => Promise<ActionResult>;
+  addStaff: (v: AccountInput & { password: string; role: "LIBRARIAN" | "ADMIN" }) => Promise<ActionResult>;
   updateProfile: (
-    id: number,
     v: { fullName: string; contact: string },
   ) => Promise<ActionResult>;
-  withdrawMember: (id: number, failure?: boolean) => Promise<ActionResult>;
+  withdrawMember: () => Promise<ActionResult>;
   saveBook: (v: BookFormValues, id?: number) => Promise<ActionResult>;
   addCopy: (bookId: number, ignoredCode?: string) => Promise<ActionResult>;
   changeCopyStatus: (
     id: number,
     status: RecordStatus,
     reason: string,
-    failure?: boolean,
   ) => Promise<ActionResult>;
   toggleCopyStatus: (id: number) => Promise<ActionResult>;
   setBookStatus: (id: number) => Promise<ActionResult>;
-  resetDemo: () => Promise<void>;
 }
 
 const ok = (message: string, loanId?: number): ActionResult => ({
@@ -111,8 +96,6 @@ const ok = (message: string, loanId?: number): ActionResult => ({
 });
 
 const fail = (message: string): ActionResult => ({ ok: false, message });
-
-const now = () => new Date().toISOString();
 
 const emptyData: LibraryData = {
   users: [],
@@ -129,63 +112,30 @@ const emptyData: LibraryData = {
   requests: [],
 };
 
-function mapAuthToRoleState(user: AuthenticatedUser | null) {
-  if (!user) {
-    return {
-      currentUser: null,
-      demoRole: null,
-      demoMemberId: 0,
-      demoLibrarianId: 0,
-      demoAdminId: 0,
-    };
-  }
-  return {
-    currentUser: user,
-    demoRole: user.role,
-    demoMemberId: user.role === "MEMBER" ? user.userId : 0,
-    demoLibrarianId: user.role === "LIBRARIAN" ? user.userId : 0,
-    demoAdminId: user.role === "ADMIN" ? user.userId : 0,
-  };
-}
-
 export const useLibraryStore = create<LibraryStore>()((set, get) => {
-  async function runAndSync(
-    work: () => Promise<ActionResult>,
-    options?: { simulateFailure?: boolean; operation?: string },
-  ): Promise<ActionResult> {
-    if (options?.simulateFailure) {
-      const msg = "오류 시연: 이력 저장 실패. 요청을 전송하지 않고 롤백했습니다.";
-      if (options.operation) {
-        get().recordDbFlowEvents([
-          {
-            operation: "ROLLBACK",
-            message: `${options.operation}: ${msg}`,
-            status: "failed",
-          },
-        ]);
-      }
-      return fail(msg);
-    }
+  let sessionVersion = 0;
+  let refreshVersion = 0;
+  let initialization: Promise<void> | undefined;
 
+  function replaceSession(currentUser: AuthenticatedUser | null) {
+    sessionVersion++;
+    set({ ...emptyData, currentUser, dbFlowEvents: [], dataError: "" });
+  }
+
+  async function runAndSync(work: () => Promise<ActionResult>): Promise<ActionResult> {
+    const session = sessionVersion;
     try {
       const result = await work();
-      if (result.ok) {
-        await get().syncState();
+      if (result.ok && session === sessionVersion) {
+        await get().syncState().catch(() => undefined);
       }
       return result;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
-      if (options?.operation) {
-        get().recordDbFlowEvents([
-          {
-            operation: "ROLLBACK",
-            message: `${options.operation}: ${message}`,
-            status: "failed",
-          },
-        ]);
+      if (session === sessionVersion && error instanceof ApiError &&
+          (error.status === 401 || error.code === "INACTIVE_USER")) {
+        replaceSession(null);
       }
-      return fail(message);
+      return fail(error instanceof Error ? error.message : "요청 처리에 실패했습니다.");
     }
   }
 
@@ -193,80 +143,52 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
     ...emptyData,
     currentUser: null,
     isInitialized: false,
-    isLoading: false,
-    demoRole: null,
-    roleSwitchTarget: null,
-    demoMemberId: 0,
-    demoLibrarianId: 0,
-    demoAdminId: 0,
+    dataError: "",
     dbFlowEvents: [],
 
-    initialize: async () => {
-      set({ isLoading: true });
-      try {
-        const [user, data] = await Promise.all([
-          httpAuthTransport.currentUser().catch(() => null),
-          libraryApi.fetchState(),
-        ]);
-        set({
-          ...data,
-          ...mapAuthToRoleState(user),
-          isInitialized: true,
-          isLoading: false,
-        });
-      } catch {
-        set({ isInitialized: true, isLoading: false });
-      }
+    initialize: () => {
+      initialization ??= get().syncState().catch(() => undefined)
+        .finally(() => set({ isInitialized: true }));
+      return initialization;
     },
 
     syncState: async () => {
-      const [user, data] = await Promise.all([
-        httpAuthTransport.currentUser().catch(() => null),
-        libraryApi.fetchState(),
-      ]);
-      set({
-        ...data,
-        ...mapAuthToRoleState(user),
-      });
+      const refresh = ++refreshVersion;
+      const session = sessionVersion;
+      const isCurrent = () => refresh === refreshVersion && session === sessionVersion;
+      try {
+        const user = await httpAuthTransport.currentUser();
+        if (!isCurrent()) return;
+        if (user?.userId !== get().currentUser?.userId ||
+            user?.role !== get().currentUser?.role) {
+          set({ ...emptyData, dbFlowEvents: [] });
+        }
+        set({ currentUser: user });
+        if (!user) return;
+        const data = await libraryApi.fetchState();
+        if (isCurrent()) set({ ...data, dataError: "" });
+      } catch (error) {
+        if (!isCurrent()) return;
+        if (error instanceof ApiError && (error.status === 401 || error.code === "INACTIVE_USER")) {
+          replaceSession(null);
+        }
+        set({ dataError: error instanceof Error ? error.message : "데이터를 불러오지 못했습니다." });
+        throw error;
+      }
     },
 
     setCurrentUser: async (user) => {
-      set(mapAuthToRoleState(user));
-      const data = await libraryApi.fetchState();
-      set({ ...data });
+      replaceSession(user);
+      if (user) await get().syncState().catch(() => undefined);
     },
 
-    requestRoleSwitch: (role, target) => {
-      const current = get().currentUser;
-      if (current && current.role === role) {
-        set({ roleSwitchTarget: target });
-        return;
+    logout: async () => {
+      try {
+        await httpAuthTransport.logout();
+      } catch (error) {
+        if (!(error instanceof ApiError && error.status === 401)) throw error;
       }
-      set({
-        demoRole: role,
-        roleSwitchTarget: target,
-      });
-    },
-
-    completeRoleSwitch: () => set({ roleSwitchTarget: null }),
-    setDemoMember: (id) => set({ demoMemberId: id }),
-    setDemoLibrarian: (id) => set({ demoLibrarianId: id }),
-    setDemoAdmin: (id) => set({ demoAdminId: id }),
-
-    recordDbFlowEvents: (events) => {
-      const runId = crypto.randomUUID();
-      set((s) => ({
-        dbFlowEvents: [
-          ...s.dbFlowEvents,
-          ...events.map((e, i) => ({
-            ...e,
-            id: `${runId}-${i}`,
-            runId,
-            step: i + 1,
-            createdAt: now(),
-          })),
-        ].slice(-150),
-      }));
+      replaceSession(null);
     },
 
     clearDbFlowEvents: () => set({ dbFlowEvents: [] }),
@@ -289,7 +211,6 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
           }
           return ok(res.message, res.loanId ?? undefined);
         },
-        { simulateFailure: options.simulateFailure, operation: "CHECKOUT" },
       ),
 
     returnLoan: (loanId, _staffId, options = {}) =>
@@ -311,10 +232,9 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
           }
           return ok(res.message, res.loanId ?? loanId);
         },
-        { simulateFailure: options.simulateFailure, operation: "RETURN" },
       ),
 
-    renewLoan: (loanId, _memberId, failure = false, options = {}) =>
+    renewLoan: (loanId, _memberId, options = {}) =>
       runAndSync(
         async () => {
           const res = await libraryApi.renewLoan(loanId, options.requestId);
@@ -327,10 +247,6 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
             }));
           }
           return ok(res.message, res.loanId ?? loanId);
-        },
-        {
-          simulateFailure: failure || options.simulateFailure,
-          operation: "RENEW",
         },
       ),
 
@@ -351,7 +267,6 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
           }
           return ok(res.message, res.loanId ?? loanId);
         },
-        { simulateFailure: options.simulateFailure, operation: "CORRECT" },
       ),
 
     setUserStatus: (id, reason = "") =>
@@ -374,40 +289,25 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
         return ok("저자명과 연결 서지 이력을 저장했습니다.");
       }),
 
-    addMember: (v) =>
-      runAndSync(async () => {
-        await httpAuthTransport.signup({
-          loginId: v.loginId,
-          password: "password123",
-          fullName: v.fullName,
-          contact: v.contact,
-        });
-        return ok("회원가입이 완료되었습니다.");
-      }),
-
     addStaff: (v) =>
       runAndSync(async () => {
         const res = await libraryApi.createStaff(v);
         return ok(res.message);
       }),
 
-    updateProfile: (_id, v) =>
+    updateProfile: (v) =>
       runAndSync(async () => {
         const res = await libraryApi.updateProfile(v.fullName, v.contact);
         return ok(res.message);
       }),
 
-    withdrawMember: (_id, failure = false) =>
+    withdrawMember: () =>
       runAndSync(
         async () => {
           const res = await libraryApi.withdrawAccount();
-          set({
-            ...mapAuthToRoleState(null),
-            dbFlowEvents: [],
-          });
+          replaceSession(null);
           return ok(res.message);
         },
-        { simulateFailure: failure },
       ),
 
     saveBook: (v, id) =>
@@ -432,13 +332,12 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
         return ok(`소장본 등록 완료 · ${copy.copyCode}`);
       }),
 
-    changeCopyStatus: (id, status, reason, failure = false) =>
+    changeCopyStatus: (id, status, reason) =>
       runAndSync(
         async () => {
           await libraryApi.changeCopyStatus(id, status, reason);
           return ok("소장본 상태와 이력을 저장했습니다.");
         },
-        { simulateFailure: failure },
       ),
 
     toggleCopyStatus: async () =>
@@ -447,8 +346,5 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
     setBookStatus: async () =>
       fail("서지정보 자체는 제적하지 않습니다. 개별 소장본 상태를 관리하세요."),
 
-    resetDemo: async () => {
-      await get().syncState();
-    },
   };
 });

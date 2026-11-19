@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLibraryStore, type ActionResult } from "../store/libraryStore";
 import { WorkspaceLayout } from "../components/layout/WorkspaceLayout";
@@ -25,38 +25,28 @@ export function AccountPage() {
   const s = useLibraryStore(),
     navigate = useNavigate(),
     id =
-      s.demoRole === "MEMBER"
-        ? s.demoMemberId
-        : s.demoRole === "LIBRARIAN"
-          ? s.demoLibrarianId
-          : s.demoAdminId;
-  const user = s.users.find((u) => u.userId === id),
-    [name, setName] = useState(user?.fullName ?? ""),
-    [phone, setPhone] = useState(user?.contact ?? ""),
+      s.currentUser?.userId;
+  const suspension = s.users.find((item) => item.userId === id)?.borrowingSuspendedUntil;
+  const user = s.currentUser,
+    [name, setName] = useState<string | null>(null),
+    [phone, setPhone] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [result, setResult] = useState<ActionResult | null>(null),
     [confirm, setConfirm] = useState(false);
 
-  useEffect(() => {
-    if (user) {
-      setName(user.fullName ?? "");
-      setPhone(user.contact ?? "");
-    }
-  }, [user?.userId, user?.fullName, user?.contact]);
-
   return (
     <WorkspaceLayout
       section={
-        s.demoRole === "MEMBER"
+        s.currentUser?.role === "MEMBER"
           ? "user"
-          : s.demoRole === "LIBRARIAN"
+          : s.currentUser?.role === "LIBRARIAN"
             ? "librarian"
             : "admin"
       }
     >
       <PageHeading
         title="내 계정"
-        description="본인 정보만 수정합니다. 비밀번호 변경과 직원 최초 비밀번호 설정은 추후 확장 범위입니다."
+        description="본인 계정의 이름과 연락처를 관리합니다."
       />
       <Card>
         <p>
@@ -69,11 +59,12 @@ export function AccountPage() {
             if (busy) return;
             setBusy(true);
             try {
-              const r = await s.updateProfile(id, {
-                fullName: name,
-                contact: phone,
+              const r = await s.updateProfile({
+                fullName: name ?? user?.fullName ?? "",
+                contact: phone ?? user?.contact ?? "",
               });
               setResult(r);
+              if (r.ok && !s.dataError) { setName(null); setPhone(null); }
             } finally {
               setBusy(false);
             }
@@ -81,7 +72,7 @@ export function AccountPage() {
         >
           <Field label="이름">
             <input
-              value={name}
+              value={name ?? user?.fullName ?? ""}
               onChange={(e) => setName(e.target.value)}
               required
               maxLength={100}
@@ -89,7 +80,7 @@ export function AccountPage() {
           </Field>
           <Field label="연락처">
             <input
-              value={phone}
+              value={phone ?? user?.contact ?? ""}
               onChange={(e) => setPhone(e.target.value)}
               required
               inputMode="tel"
@@ -103,7 +94,7 @@ export function AccountPage() {
         <Notice tone="info" title="인증 정책 안내">
           현재 로그인한 본인의 이름과 연락처만 수정할 수 있습니다.
         </Notice>
-        {s.demoRole === "MEMBER" && (
+        {s.currentUser?.role === "MEMBER" && (
           <>
             <p>
               현재 대출{" "}
@@ -115,8 +106,8 @@ export function AccountPage() {
             </p>
             <p>
               신규 대출 정지 종료 ·{" "}
-              {user?.borrowingSuspendedUntil
-                ? new Date(user.borrowingSuspendedUntil).toLocaleString("ko-KR")
+              {suspension
+                ? new Date(suspension).toLocaleString("ko-KR")
                 : "없음"}
             </p>
             <Button
@@ -152,7 +143,7 @@ export function AccountPage() {
                 if (busy) return;
                 setBusy(true);
                 try {
-                  const r = await s.withdrawMember(id);
+                  const r = await s.withdrawMember();
                   setResult(r);
                   if (r.ok) navigate("/");
                   else setConfirm(false);
@@ -170,52 +161,6 @@ export function AccountPage() {
   );
 }
 
-export function SignupPage() {
-  const s = useLibraryStore(),
-    [v, setV] = useState({ loginId: "", fullName: "", contact: "" }),
-    [busy, setBusy] = useState(false),
-    [result, setResult] = useState<ActionResult | null>(null);
-  return (
-    <main className="signup-page">
-      <PageHeading
-        title="회원가입"
-        description="관리자 승인 없이 일반 회원으로 가입합니다."
-      />
-      <Card>
-        <form
-          className="modal-form"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (busy) return;
-            setBusy(true);
-            try {
-              const r = await s.addMember(v);
-              setResult(r);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {(["loginId", "fullName", "contact"] as const).map((key, i) => (
-            <Field key={key} label={["로그인 ID", "이름", "연락처"][i]}>
-              <input
-                required
-                value={v[key]}
-                onChange={(e) => setV({ ...v, [key]: e.target.value })}
-              />
-            </Field>
-          ))}
-          <Button type="submit" disabled={busy}>
-            {busy ? "가입 중…" : "일반 회원 가입"}
-          </Button>
-        </form>
-        <Result value={result} />
-        <a href="/">홈으로</a>
-      </Card>
-    </main>
-  );
-}
-
 export function AccountsPage() {
   const s = useLibraryStore(),
     [query, setQuery] = useState(""),
@@ -229,6 +174,7 @@ export function AccountsPage() {
       loginId: "",
       fullName: "",
       contact: "",
+      password: "",
       role: "LIBRARIAN" as "LIBRARIAN" | "ADMIN",
     });
 
@@ -252,6 +198,7 @@ export function AccountsPage() {
           loginId: "",
           fullName: "",
           contact: "",
+          password: "",
           role: "LIBRARIAN",
         });
       }
@@ -350,7 +297,7 @@ export function AccountsPage() {
         이용 내역은 제공하지 않습니다.
       </Notice>
       {create && (
-        <Modal title="직원 계정 생성" onClose={() => setCreate(false)}>
+        <Modal title="직원 계정 생성" onClose={() => { setCreate(false); setV({ ...v, password: "" }); }}>
           <form className="modal-form" onSubmit={submit}>
             {(["loginId", "fullName", "contact"] as const).map((key, i) => (
               <Field key={key} label={["로그인 ID", "이름", "연락처"][i]}>
@@ -361,6 +308,10 @@ export function AccountsPage() {
                 />
               </Field>
             ))}
+            <Field label="초기 비밀번호">
+              <input required type="password" autoComplete="new-password" maxLength={128}
+                value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })} />
+            </Field>
             <Field label="생성 역할">
               <select
                 value={v.role}
@@ -417,7 +368,6 @@ export function CopiesPage() {
     [target, setTarget] = useState<number | null>(null),
     [status, setStatus] = useState<RecordStatus>("DAMAGED"),
     [reason, setReason] = useState(""),
-    [failure, setFailure] = useState(false),
     [busy, setBusy] = useState(false),
     [result, setResult] = useState<ActionResult | null>(null);
   return (
@@ -498,14 +448,6 @@ export function CopiesPage() {
           <Field label="사유">
             <input value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
-          <label>
-            <input
-              type="checkbox"
-              checked={failure}
-              onChange={(e) => setFailure(e.target.checked)}
-            />{" "}
-            이력 저장 실패 시연
-          </label>
           <Result value={result} />
           <ModalFooter>
             <Button
@@ -518,7 +460,6 @@ export function CopiesPage() {
                     target,
                     status,
                     reason,
-                    failure,
                   );
                   setResult(r);
                   if (r.ok) setTarget(null);
@@ -543,8 +484,7 @@ export function CorrectionsPage() {
     [reason, setReason] = useState(""),
     [physical, setPhysical] = useState(false),
     [busy, setBusy] = useState(false),
-    [result, setResult] = useState<ActionResult | null>(null),
-    [failure, setFailure] = useState(false);
+    [result, setResult] = useState<ActionResult | null>(null);
 
   const activeLoanId = s.loans.some((l) => l.loanId === id)
     ? id
@@ -567,7 +507,6 @@ export function CorrectionsPage() {
               const r = await s.correctLoan(
                 activeLoanId,
                 { type, reason, physicalConfirmed: physical },
-                { simulateFailure: failure },
               );
               setResult(r);
             } finally {
@@ -619,14 +558,6 @@ export function CorrectionsPage() {
             />{" "}
             실물 회수 또는 실제 미반출을 확인했습니다.
           </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={failure}
-              onChange={(e) => setFailure(e.target.checked)}
-            />{" "}
-            이력 저장 실패 · 전체 롤백 시연
-          </label>
           <Button type="submit" disabled={busy}>
             {busy ? "정정 중…" : "정정 확정"}
           </Button>
@@ -643,7 +574,7 @@ export function CorrectionsPage() {
 
 export function HistoryPage() {
   const s = useLibraryStore(),
-    admin = s.demoRole === "ADMIN",
+    admin = s.currentUser?.role === "ADMIN",
     [query, setQuery] = useState("");
   const rows = admin
     ? s.staffHistory.map((r) => {

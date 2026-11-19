@@ -22,25 +22,15 @@ const DbFlowTimeline = lazy(() =>
     default: m.DbFlowTimeline,
   })),
 );
-import { httpAuthTransport } from "../../api/http-auth";
 import { useLibraryStore } from "../../store/libraryStore";
 import { LibraryNav } from "./LibraryNav";
 
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const resetDemo = useLibraryStore((state) => state.resetDemo);
-  const setCurrentUser = useLibraryStore((state) => state.setCurrentUser);
-  const demoRole = useLibraryStore((state) => state.demoRole);
-  const users = useLibraryStore((state) => state.users);
-  const demoAdminId = useLibraryStore((state) => state.demoAdminId);
-  const demoLibrarianId = useLibraryStore((state) => state.demoLibrarianId);
-  const setDemoAdmin = useLibraryStore((state) => state.setDemoAdmin);
-  const setDemoLibrarian = useLibraryStore((state) => state.setDemoLibrarian);
-  const completeRoleSwitch = useLibraryStore(
-    (state) => state.completeRoleSwitch,
-  );
-  const roleSwitchTarget = useLibraryStore((state) => state.roleSwitchTarget);
+  const syncState = useLibraryStore((state) => state.syncState);
+  const role = useLibraryStore((state) => state.currentUser?.role ?? null);
+  const dataError = useLibraryStore((state) => state.dataError);
   const events = useLibraryStore((state) => state.dbFlowEvents);
   const [notice, setNotice] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -67,11 +57,6 @@ export function AppShell() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-
-  useEffect(() => {
-    if (!roleSwitchTarget || location.pathname !== roleSwitchTarget) return;
-    completeRoleSwitch();
-  }, [completeRoleSwitch, location.pathname, roleSwitchTarget]);
 
   useEffect(() => {
     return useLibraryStore.subscribe((state, previous) => {
@@ -123,7 +108,11 @@ export function AppShell() {
   ]);
 
   async function handleReset() {
-    await resetDemo();
+    try {
+      await syncState();
+    } catch {
+      return;
+    }
     setFlowOpen(false);
     setMobileFlowTab("work");
     navigate("/");
@@ -133,12 +122,12 @@ export function AppShell() {
 
   async function logout() {
     try {
-      await httpAuthTransport.logout();
-    } catch {
-      // 세션이 이미 만료된 경우에도 클라이언트 상태는 초기화
+      await useLibraryStore.getState().logout();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "로그아웃에 실패했습니다.");
+      return;
     }
-    await setCurrentUser(null);
-    useLibraryStore.setState({ roleSwitchTarget: null, dbFlowEvents: [] });
+    setNotice("");
     setMobileMenuOpen(false);
     navigate("/");
   }
@@ -199,62 +188,20 @@ export function AppShell() {
               <small>LIBRARY SYSTEM</small>
             </span>
           </Link>
-          <LibraryNav role={demoRole} />
+          <LibraryNav role={role} />
           <div className="header-tools">
-            {demoRole === "ADMIN" && (
-              <select
-                aria-label="데모 관리자 선택"
-                value={demoAdminId}
-                onChange={(event) => setDemoAdmin(Number(event.target.value))}
-              >
-                {users
-                  .filter(
-                    (user) =>
-                      user.role === "ADMIN" && user.accountStatus === "ACTIVE",
-                  )
-                  .map((user) => (
-                    <option key={user.userId} value={user.userId}>
-                      관리자 #{user.userId}
-                    </option>
-                  ))}
-              </select>
-            )}
-            {demoRole === "LIBRARIAN" && (
-              <label className="header-librarian-select">
-                <span className="sr-only">데모 사서 선택</span>
-                <select
-                  aria-label="데모 사서 선택"
-                  value={demoLibrarianId}
-                  onChange={(event) =>
-                    setDemoLibrarian(Number(event.target.value))
-                  }
-                >
-                  {users
-                    .filter(
-                      (user) =>
-                        user.role === "LIBRARIAN" &&
-                        user.accountStatus === "ACTIVE",
-                    )
-                    .map((user) => (
-                      <option key={user.userId} value={user.userId}>
-                        {user.fullName} · {user.userId}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            )}
-            {demoRole && (
+            {role && (
               <button className="header-reset" onClick={logout}>
                 로그아웃
               </button>
             )}
             <Link
               className="top-nav-link"
-              to={demoRole ? "/account" : "/signup"}
+              to={role ? "/account" : "/signup"}
             >
-              {demoRole ? "내 계정" : "회원가입"}
+              {role ? "내 계정" : "회원가입"}
             </Link>
-            {!demoRole && (
+            {!role && (
               <Link className="top-nav-link" to="/login">
                 로그인
               </Link>
@@ -293,11 +240,11 @@ export function AppShell() {
         {mobileMenuOpen && (
           <div className="mobile-nav">
             <LibraryNav
-              role={demoRole}
+              role={role}
               mobile
               onNavigate={() => setMobileMenuOpen(false)}
             />
-            {demoRole ? (
+            {role ? (
               <button onClick={logout}>로그아웃</button>
             ) : (
               <>
@@ -313,6 +260,7 @@ export function AppShell() {
           </div>
         )}
       </header>
+      {dataError && <p className="global-toast" role="alert">{dataError}</p>}
       {notice && (
         <div className="global-toast" role="status">
           {notice}

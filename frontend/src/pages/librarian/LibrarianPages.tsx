@@ -53,7 +53,7 @@ function useLibraryData() {
       copies: state.copies,
       loans: state.loans,
       renewals: state.renewals,
-      demoLibrarianId: state.demoLibrarianId,
+      librarianId: state.currentUser?.userId ?? 0,
     })),
   );
 }
@@ -136,7 +136,7 @@ export function LibrarianDashboardPage() {
         actions={
           <Badge tone="blue">
             LIBRARIAN ·{" "}
-            {data.users.find((user) => user.userId === data.demoLibrarianId)
+            {data.users.find((user) => user.userId === data.librarianId)
               ?.fullName ?? "선택 필요"}
           </Badge>
         }
@@ -348,8 +348,8 @@ export function LibrarianCheckoutPage() {
   const selectedMember = data.users.find(
     (user) => user.userId === activeMemberId && user.role === "MEMBER",
   );
-  const demoLibrarian = data.users.find(
-    (user) => user.userId === data.demoLibrarianId,
+  const librarian = data.users.find(
+    (user) => user.userId === data.librarianId,
   );
   const selectedBook = filteredBooks.find(
     (book) => book.bookId === activeBookId,
@@ -417,7 +417,7 @@ export function LibrarianCheckoutPage() {
       const outcome = await checkout(
         activeMemberId,
         activeCopyId,
-        data.demoLibrarianId,
+        data.librarianId,
       );
       if (outcome.ok) {
         const pool = filteredBooks.length > 0 ? filteredBooks : data.books;
@@ -623,7 +623,7 @@ export function LibrarianCheckoutPage() {
             {busy ? "처리 중…" : "대출 처리"}
           </Button>
           <p className="muted-small">
-            대출 처리 사서: {demoLibrarian?.fullName ?? "선택 없음"} · PostgreSQL DB 반영
+            대출 처리 사서: {librarian?.fullName ?? "선택 없음"} · PostgreSQL DB 반영
           </p>
         </Card>
       </div>
@@ -667,7 +667,7 @@ export function LibrarianReturnsPage() {
     try {
       const outcome = await returnLoan(
         targetLoan.loanId,
-        data.demoLibrarianId,
+        data.librarianId,
         {
           damaged,
           reason: damaged ? damageReason.trim() : "",

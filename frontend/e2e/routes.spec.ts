@@ -1,12 +1,15 @@
-﻿import { test, expect } from "@playwright/test";
+import { installApiFixture } from "./api-fixture";
+import { test, expect } from "@playwright/test";
 test("all role routes, console errors, responsive layout and workflow controls", async ({
   page,
 }) => {
+  const api = await installApiFixture(page);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
+  api.setRole("MEMBER");
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   for (const [role, paths] of [
@@ -57,11 +60,7 @@ test("all role routes, console errors, responsive layout and workflow controls",
       ],
     ],
   ] as const) {
-    await page.evaluate(async (role) => {
-      const { useLibraryStore: s } = await import("/src/store/libraryStore.ts");
-      s.getState().requestRoleSwitch(role, "/");
-      s.getState().completeRoleSwitch();
-    }, role);
+      api.setRole(role);
     for (const path of paths) {
       await page.goto(path);
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -94,11 +93,7 @@ test("all role routes, console errors, responsive layout and workflow controls",
     ),
   ).toBe(true);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.evaluate(async () => {
-    const { useLibraryStore: s } = await import("/src/store/libraryStore.ts");
-    s.getState().requestRoleSwitch("MEMBER", "/");
-    s.getState().completeRoleSwitch();
-  });
+  api.setRole("MEMBER");
   await page.goto("/user/books");
   await page.getByRole("textbox", { name: "도서 검색어" }).fill("Clean");
   await expect(page.locator(".book-card")).toHaveCount(1);
