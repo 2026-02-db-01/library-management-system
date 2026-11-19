@@ -1,8 +1,9 @@
+from collections import Counter
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.security import HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,9 +22,8 @@ from src.books.schemas import (
 )
 from src.core.database import get_db
 from src.core.schemas import CamelModel
-from src.core.security import decode_token
 from src.loans.models import Loan, LoanCorrectionHistory, LoanRenewal, RequestRecord
-from src.users.dependencies import ACCESS_COOKIE_NAME, bearer_scheme
+from src.users.dependencies import CurrentUser
 from src.users.models import StaffAccountHistory, User
 from src.users.schemas import LibraryUserResponse, StaffAccountHistoryResponse
 
@@ -100,6 +100,73 @@ class RequestRecordStateItem(CamelModel):
     completed_at: datetime | None
 
 
+class MonthlyLoanStatistics(CamelModel):
+    month: str
+    loans: int
+    returns: int
+
+
+class LibrarianStatistics(CamelModel):
+    checkouts: int
+    returns: int
+
+
+class LoanStatistics(CamelModel):
+    total: int
+    active: int
+    overdue: int
+    returned: int
+    overdue_history: int
+    by_book: dict[int, int]
+    by_librarian: dict[int, LibrarianStatistics]
+    monthly: list[MonthlyLoanStatistics]
+
+
+def _loan_statistics(loans: list[Loan], copies: list[BookCopy]) -> LoanStatistics:
+    kst = ZoneInfo("Asia/Seoul")
+    today = datetime.now(kst).date()
+    month_index = today.year * 12 + today.month - 1
+    book_ids = {copy.copy_id: copy.book_id for copy in copies}
+    by_book: Counter[int] = Counter()
+    checkouts: Counter[int] = Counter()
+    returns: Counter[int] = Counter()
+    monthly_loans: Counter[str] = Counter()
+    monthly_returns: Counter[str] = Counter()
+    total = active = overdue = returned = overdue_history = 0
+    for loan in loans:
+        if loan.is_cancelled:
+            continue
+        total += 1
+        if loan.copy_id in book_ids:
+            by_book[book_ids[loan.copy_id]] += 1
+        checkouts[loan.checked_out_by_user_id] += 1
+        monthly_loans[loan.borrowed_at.astimezone(kst).strftime("%Y-%m")] += 1
+        if loan.returned_at is None:
+            active += 1
+            overdue += int(loan.current_due_date < today)
+        else:
+            returned += 1
+            actual = loan.returned_at.astimezone(kst)
+            overdue_history += int(actual.date() > loan.current_due_date)
+            monthly_returns[actual.strftime("%Y-%m")] += 1
+            if loan.returned_by_user_id is not None:
+                returns[loan.returned_by_user_id] += 1
+
+    months = [f"{index // 12:04d}-{index % 12 + 1:02d}" for index in range(month_index - 5, month_index + 1)]
+    return LoanStatistics(
+        total=total, active=active, overdue=overdue, returned=returned, overdue_history=overdue_history,
+        by_book=dict(by_book),
+        by_librarian={
+            user_id: LibrarianStatistics(checkouts=checkouts[user_id], returns=returns[user_id])
+            for user_id in checkouts.keys() | returns.keys()
+        },
+        monthly=[
+            MonthlyLoanStatistics(month=f"{int(key[-2:])}월", loans=monthly_loans[key], returns=monthly_returns[key])
+            for key in months
+        ],
+    )
+
+
 class LibraryDataResponse(CamelModel):
     """domain.ts의 LibraryData 인터페이스(12개 테이블)와 1:1 매핑"""
 
@@ -108,6 +175,8 @@ class LibraryDataResponse(CamelModel):
     authors: list[AuthorResponse]
     book_authors: list[BookAuthorStateItem]
     copies: list[BookCopyResponse]
+    loan_statistics: LoanStatistics | None = None
+    occupied_copy_ids: list[int]
     loans: list[LoanStateItem]
     renewals: list[LoanRenewalStateItem]
     staff_history: list[StaffAccountHistoryResponse]
@@ -117,75 +186,63 @@ class LibraryDataResponse(CamelModel):
     requests: list[RequestRecordStateItem]
 
 
-def _resolve_optional_user(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials | None,
-    db: Session,
-) -> User | None:
-    token = (
-        credentials.credentials
-        if credentials is not None and credentials.scheme.lower() == "bearer"
-        else request.cookies.get(ACCESS_COOKIE_NAME)
-    )
-    if not token:
-        return None
-    payload = decode_token(token)
-    if payload is None or payload.get("type") != "access" or payload.get("sub") is None:
-        return None
-    user = db.get(User, int(payload["sub"]))
-    if user is None or not user.is_active:
-        return None
-    return user
-
-
 @router.get("/state", response_model=LibraryDataResponse)
 def get_library_state(
-    request: Request,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    viewer: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> LibraryDataResponse:
-    viewer = _resolve_optional_user(request, credentials, db)
-    is_staff = viewer is not None and viewer.role in ("LIBRARIAN", "ADMIN")
+    is_librarian = viewer.role == "LIBRARIAN"
+    is_admin = viewer.role == "ADMIN"
 
     raw_users = list(db.scalars(select(User).order_by(User.user_id.asc())).all())
     users_out: list[LibraryUserResponse] = []
     for u in raw_users:
         item = LibraryUserResponse.model_validate(u)
-        if not is_staff and (viewer is None or viewer.user_id != u.user_id):
-            item.login_id = None
-            item.full_name = None
-            item.contact = None
+        if viewer.user_id != u.user_id:
+            if is_admin and u.role == "MEMBER":
+                item.login_id = None
+                item.full_name = None
+                item.contact = None
+                item.borrowing_suspended_until = None
+            elif not (is_admin or (is_librarian and u.role == "MEMBER")):
+                continue
         users_out.append(item)
 
     raw_loans = list(db.scalars(select(Loan).order_by(Loan.loan_id.desc())).all())
     loans_out: list[LoanStateItem] = []
     my_loan_ids: set[int] = set()
+    occupied_copy_ids: set[int] = set()
 
     for l in raw_loans:
-        is_mine = viewer is not None and l.member_user_id == viewer.user_id
-        if is_staff or is_mine:
+        is_mine = l.member_user_id == viewer.user_id
+        if not l.is_cancelled and l.returned_at is None:
+            occupied_copy_ids.add(l.copy_id)
+        if is_librarian or is_mine:
             loans_out.append(LoanStateItem.model_validate(l))
             if is_mine:
                 my_loan_ids.add(l.loan_id)
-        elif not l.is_cancelled and l.returned_at is None:
-            item = LoanStateItem.model_validate(l)
-            item.member_user_id = None
-            loans_out.append(item)
 
     raw_renewals = list(
         db.scalars(select(LoanRenewal).order_by(LoanRenewal.renewal_id.asc())).all()
     )
     visible_renewals = (
         raw_renewals
-        if is_staff
+        if is_librarian
         else [r for r in raw_renewals if r.loan_id in my_loan_ids]
     )
 
+    copies = list(db.scalars(select(BookCopy).order_by(BookCopy.copy_id.asc())).all())
+    visible_book_ids = {c.book_id for c in copies if c.management_status != "RETIRED"}
+    own_copy_ids = {loan.copy_id for loan in loans_out}
+    visible_book_ids.update(c.book_id for c in copies if c.copy_id in own_copy_ids)
+
     return LibraryDataResponse(
+        loan_statistics=_loan_statistics(raw_loans, copies) if is_admin else None,
         users=users_out,
         books=[
             BookStateItem.model_validate(b)
             for b in db.scalars(select(Book).order_by(Book.book_id.asc())).all()
+            if is_librarian or b.book_id in visible_book_ids
         ],
         authors=[
             AuthorResponse.model_validate(a)
@@ -194,11 +251,15 @@ def get_library_state(
         book_authors=[
             BookAuthorStateItem.model_validate(ba)
             for ba in db.scalars(select(BookAuthor)).all()
+            if is_librarian or ba.book_id in visible_book_ids
         ],
         copies=[
             BookCopyResponse.model_validate(c)
-            for c in db.scalars(select(BookCopy).order_by(BookCopy.copy_id.asc())).all()
+            for c in copies if is_librarian or c.book_id in visible_book_ids
         ],
+        occupied_copy_ids=sorted(occupied_copy_ids.intersection(
+            c.copy_id for c in copies if is_librarian or c.book_id in visible_book_ids
+        )),
         loans=loans_out,
         renewals=[LoanRenewalStateItem.model_validate(r) for r in visible_renewals],
         staff_history=(
@@ -210,7 +271,7 @@ def get_library_state(
                     )
                 ).all()
             ]
-            if viewer is not None and viewer.role == "ADMIN"
+            if is_admin
             else []
         ),
         book_history=(
@@ -222,7 +283,7 @@ def get_library_state(
                     )
                 ).all()
             ]
-            if is_staff
+            if is_librarian
             else []
         ),
         copy_history=(
@@ -234,7 +295,7 @@ def get_library_state(
                     )
                 ).all()
             ]
-            if is_staff
+            if is_librarian
             else []
         ),
         corrections=(
@@ -246,7 +307,7 @@ def get_library_state(
                     )
                 ).all()
             ]
-            if is_staff
+            if is_librarian
             else []
         ),
         requests=(
@@ -256,7 +317,7 @@ def get_library_state(
                     select(RequestRecord).order_by(RequestRecord.requested_at.asc())
                 ).all()
             ]
-            if is_staff
+            if is_librarian
             else []
         ),
     )

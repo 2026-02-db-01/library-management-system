@@ -60,7 +60,11 @@ def get_current_user(
             message="토큰에 사용자 식별 정보가 없습니다.",
         )
 
-    user = db.get(User, int(user_id))
+    try:
+        parsed_id = int(user_id)
+    except (TypeError, ValueError):
+        raise UnauthorizedException(code="INVALID_TOKEN_PAYLOAD", message="유효하지 않은 세션입니다.") from None
+    user = db.get(User, parsed_id)
     if user is None:
         raise UnauthorizedException(
             code="USER_NOT_FOUND",
@@ -79,8 +83,8 @@ def get_current_user(
 def require_librarian(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
-    """사서(LIBRARIAN) 또는 관리자(ADMIN) 권한을 가진 사용자만 통과시킵니다."""
-    if current_user.role not in (UserRole.LIBRARIAN, UserRole.ADMIN):
+    """활성 사서만 사서 업무를 수행할 수 있습니다."""
+    if current_user.role != UserRole.LIBRARIAN:
         raise ForbiddenException(
             code="LIBRARIAN_REQUIRED",
             message="사서 권한이 필요한 작업입니다.",
@@ -100,6 +104,13 @@ def require_admin(
     return current_user
 
 
+def require_member(current_user: Annotated[User, Depends(get_current_user)]) -> User:
+    if current_user.role != UserRole.MEMBER:
+        raise ForbiddenException(code="MEMBER_REQUIRED", message="회원만 수행할 수 있습니다.")
+    return current_user
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
+MemberUser = Annotated[User, Depends(require_member)]
 LibrarianUser = Annotated[User, Depends(require_librarian)]
 AdminUser = Annotated[User, Depends(require_admin)]

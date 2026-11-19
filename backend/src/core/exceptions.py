@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 
 class AppException(Exception):
@@ -48,4 +50,26 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "code": exc.code,
                 "message": exc.message,
             },
+        )
+
+    @app.exception_handler(RequestValidationError)
+    def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={"detail": [
+                {"loc": item["loc"], "msg": item["msg"], "type": item["type"]}
+                for item in exc.errors()
+            ]},
+        )
+
+    @app.exception_handler(IntegrityError)
+    def handle_integrity_error(request: Request, exc: IntegrityError) -> JSONResponse:
+        if getattr(exc.orig, "sqlstate", None) == "23505":
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={"code": "DUPLICATE_RECORD", "message": "같은 값으로 등록된 기록이 있습니다."},
+            )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"code": "DATABASE_INTEGRITY_ERROR", "message": "데이터를 저장하지 못했습니다."},
         )

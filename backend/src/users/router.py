@@ -58,7 +58,6 @@ def login(
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
-    response.headers["X-Access-Token"] = access_token
 
     return AuthenticatedUserResponse.model_validate(user)
 
@@ -70,7 +69,7 @@ def get_me(current_user: CurrentUser) -> AuthenticatedUserResponse:
 
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(response: Response) -> None:
-    response.delete_cookie(key=ACCESS_COOKIE_NAME, path="/")
+    response.delete_cookie(key=ACCESS_COOKIE_NAME, path="/", secure=not settings.DEBUG, httponly=True, samesite="lax")
 
 
 @router.patch("/me", response_model=UserActionResponse)
@@ -89,7 +88,7 @@ def withdraw_my_account(
     db: Annotated[Session, Depends(get_db)],
 ) -> UserActionResponse:
     result = service.withdraw_member_account(db, current_user)
-    response.delete_cookie(key=ACCESS_COOKIE_NAME, path="/")
+    response.delete_cookie(key=ACCESS_COOKIE_NAME, path="/", secure=not settings.DEBUG, httponly=True, samesite="lax")
     return result
 
 
@@ -99,7 +98,7 @@ def get_users(
     db: Annotated[Session, Depends(get_db)],
 ) -> list[LibraryUserResponse]:
     users = service.list_all_users(db)
-    return [LibraryUserResponse.model_validate(u) for u in users]
+    return [LibraryUserResponse.model_validate(u) for u in users if u.role == "MEMBER"]
 
 
 @router.post("/staff", response_model=UserActionResponse, status_code=status.HTTP_201_CREATED)

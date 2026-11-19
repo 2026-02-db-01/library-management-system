@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from src.books import service
@@ -13,7 +13,7 @@ from src.books.schemas import (
     CopyStatusUpdateRequest,
 )
 from src.core.database import get_db
-from src.users.dependencies import LibrarianUser
+from src.users.dependencies import CurrentUser, LibrarianUser
 
 router = APIRouter()
 
@@ -47,7 +47,9 @@ def update_author(
 
 @router.get("", response_model=list[BookDetailResponse])
 def list_books(
+    current_user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
+    title: str = "",
     author: str = "",
     publisher: str = "",
     isbn: str = "",
@@ -56,8 +58,9 @@ def list_books(
     yearTo: int | None = None,
     availability: str = "",
 ) -> list[BookDetailResponse]:
-    return service.search_books(
+    results = service.search_books(
         db=db,
+        title=title,
         author=author,
         publisher=publisher,
         isbn=isbn,
@@ -65,7 +68,9 @@ def list_books(
         year_from=yearFrom,
         year_to=yearTo,
         availability=availability,
+        public_only=current_user.role != "LIBRARIAN",
     )
+    return results
 
 
 @router.post("", response_model=BookDetailResponse, status_code=status.HTTP_201_CREATED)
@@ -80,9 +85,13 @@ def create_book(
 @router.get("/{book_id}", response_model=BookDetailResponse)
 def get_book(
     book_id: int,
+    current_user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> BookDetailResponse:
-    return service.get_book_detail(db, book_id)
+    book = service.get_book_detail(db, book_id)
+    if current_user.role != "LIBRARIAN" and all(copy.management_status == "RETIRED" for copy in book.copies):
+        raise HTTPException(status_code=404, detail="도서를 찾을 수 없습니다.")
+    return book
 
 
 @router.put("/{book_id}", response_model=BookDetailResponse)

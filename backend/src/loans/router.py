@@ -13,7 +13,7 @@ from src.loans.schemas import (
     RenewLoanRequest,
     ReturnLoanRequest,
 )
-from src.users.dependencies import CurrentUser, LibrarianUser
+from src.users.dependencies import CurrentUser, LibrarianUser, MemberUser
 
 router = APIRouter()
 
@@ -70,7 +70,7 @@ def return_book(
 def renew_book(
     loan_id: int,
     payload: RenewLoanRequest,
-    current_user: CurrentUser,
+    current_user: MemberUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> LoanActionResponse:
     return service.renew_loan(db, loan_id, payload, current_user.user_id)
