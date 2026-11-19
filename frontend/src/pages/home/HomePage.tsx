@@ -16,10 +16,13 @@ export function HomePage() {
   useEffect(() => { if (hash === "#library-guide" || hash === "#service-areas") document.getElementById(hash.slice(1))?.scrollIntoView(); }, [hash]);
   const memberLink = (to: string) => role === "MEMBER" ? to : `/login?next=${encodeURIComponent(to)}`;
   async function logout() {
-    try { await httpAuthTransport.logout(); }
-    finally {
-      try { await useLibraryStore.getState().setCurrentUser(null); } catch { /* User already cleared before refresh. */ }
+    try {
+      await httpAuthTransport.logout();
+      await useLibraryStore.getState().setCurrentUser(null);
+      useLibraryStore.setState({ roleSwitchTarget: null, dbFlowEvents: [] });
       navigate("/");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "로그아웃에 실패했습니다.");
     }
   }
   function search(event: FormEvent) {
