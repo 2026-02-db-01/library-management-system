@@ -32,11 +32,6 @@ export function AppShell() {
   const resetDemo = useLibraryStore((state) => state.resetDemo);
   const setCurrentUser = useLibraryStore((state) => state.setCurrentUser);
   const demoRole = useLibraryStore((state) => state.demoRole);
-  const users = useLibraryStore((state) => state.users);
-  const demoAdminId = useLibraryStore((state) => state.demoAdminId);
-  const demoLibrarianId = useLibraryStore((state) => state.demoLibrarianId);
-  const setDemoAdmin = useLibraryStore((state) => state.setDemoAdmin);
-  const setDemoLibrarian = useLibraryStore((state) => state.setDemoLibrarian);
   const completeRoleSwitch = useLibraryStore(
     (state) => state.completeRoleSwitch,
   );
@@ -201,48 +196,6 @@ export function AppShell() {
           </Link>
           <LibraryNav role={demoRole} />
           <div className="header-tools">
-            {demoRole === "ADMIN" && (
-              <select
-                aria-label="데모 관리자 선택"
-                value={demoAdminId}
-                onChange={(event) => setDemoAdmin(Number(event.target.value))}
-              >
-                {users
-                  .filter(
-                    (user) =>
-                      user.role === "ADMIN" && user.accountStatus === "ACTIVE",
-                  )
-                  .map((user) => (
-                    <option key={user.userId} value={user.userId}>
-                      관리자 #{user.userId}
-                    </option>
-                  ))}
-              </select>
-            )}
-            {demoRole === "LIBRARIAN" && (
-              <label className="header-librarian-select">
-                <span className="sr-only">데모 사서 선택</span>
-                <select
-                  aria-label="데모 사서 선택"
-                  value={demoLibrarianId}
-                  onChange={(event) =>
-                    setDemoLibrarian(Number(event.target.value))
-                  }
-                >
-                  {users
-                    .filter(
-                      (user) =>
-                        user.role === "LIBRARIAN" &&
-                        user.accountStatus === "ACTIVE",
-                    )
-                    .map((user) => (
-                      <option key={user.userId} value={user.userId}>
-                        {user.fullName} · {user.userId}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            )}
             {demoRole && (
               <button className="header-reset" onClick={logout}>
                 로그아웃
