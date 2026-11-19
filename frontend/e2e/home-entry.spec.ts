@@ -110,3 +110,24 @@ test("homepage login keeps credentials out of storage and failed logout preserve
   await page.goto("/user/books");
   await expect(page).toHaveURL(/\/login\?next=/);
 });
+
+
+test("failed initial state fetch never renders fake zero metrics and can retry", async ({ page }) => {
+  const api = await installApiFixture(page);
+  api.setRole("ADMIN");
+  let unavailable = true;
+  await page.route("**/api/v1/library/state", async (route) => {
+    if (unavailable) {
+      await route.fulfill({ status: 503, json: { message: "DB 일시 장애" } });
+    } else {
+      await route.fallback();
+    }
+  });
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: "업무 데이터를 불러오지 못했습니다." })).toBeVisible();
+  await expect(page.getByText("실제 회원·도서·대출 건수가 0이라는 뜻이 아닙니다.", { exact: false })).toBeVisible();
+  unavailable = false;
+  await page.getByRole("button", { name: "다시 시도" }).click();
+  await expect(page.getByRole("heading", { name: "업무 데이터를 불러오지 못했습니다." })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "관리자 대시보드" })).toBeVisible();
+});

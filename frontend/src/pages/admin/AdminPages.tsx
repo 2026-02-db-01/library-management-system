@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   Bar,
   BarChart,
@@ -51,6 +51,7 @@ import {
   getAvailability,
   getAuthorsForBook,
   getOverdueDays,
+  normalizeIsbn,
 } from "../../services/library";
 import { useLibraryStore, type ActionResult } from "../../store/libraryStore";
 import type { Author, Book, BookFormValues } from "../../types/domain";
@@ -253,6 +254,22 @@ export function AdminBooksPage() {
   const toggleCopyStatus = useLibraryStore((state) => state.toggleCopyStatus);
   const [params] = useSearchParams();
   const [query, setQuery] = useState(() => params.get("q") ?? "");
+  useEffect(() => {
+    setQuery(params.get("q") ?? "");
+  }, [params]);
+  const searchBy = params.get("by");
+  const searchText = query.trim().toLocaleLowerCase();
+  let normalizedIsbn: string | null = null;
+  let isbnSearchError = "";
+  if (searchText) {
+    try {
+      normalizedIsbn = normalizeIsbn(query);
+    } catch (error) {
+      if (searchBy === "isbn") {
+        isbnSearchError = error instanceof Error ? error.message : "ISBN 형식을 확인하세요.";
+      }
+    }
+  }
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [result, setResult] = useState<ActionResult | null>(null);
@@ -269,9 +286,15 @@ export function AdminBooksPage() {
       const authors = getAuthorsForBook(book.bookId, data)
         .map((author) => author.authorName)
         .join(" ");
-      return `${book.title} ${book.isbn ?? ""} ${authors}`
-        .toLocaleLowerCase()
-        .includes(query.trim().toLocaleLowerCase());
+      if (!searchText) return true;
+      if (searchBy === "isbn") return book.isbn !== null && book.isbn === normalizedIsbn;
+      if (searchBy === "author") return authors.toLocaleLowerCase().includes(searchText);
+      return (
+        `${book.title} ${book.isbn ?? ""} ${authors}`
+          .toLocaleLowerCase()
+          .includes(searchText) ||
+        (normalizedIsbn !== null && book.isbn === normalizedIsbn)
+      );
     })
     .sort(
       (a, b) => a.title.localeCompare(b.title, "ko") || a.bookId - b.bookId,
@@ -305,8 +328,9 @@ export function AdminBooksPage() {
           value={query}
           onChange={setQuery}
           label="도서 검색"
-          placeholder="도서명, ISBN, 저자 검색"
+          placeholder={searchBy === "isbn" ? "ISBN-10 또는 ISBN-13" : "도서명, ISBN, 저자 검색"}
         />
+        {isbnSearchError && <p role="alert">{isbnSearchError}</p>}
         <span className="toolbar-count">
           {visibleBooks.length}종 · {data.copies.length}권
         </span>

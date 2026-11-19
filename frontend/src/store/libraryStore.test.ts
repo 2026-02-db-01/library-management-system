@@ -100,6 +100,49 @@ describe("API-connected libraryStore", () => {
   });
 });
 
+  describe("pending mutation requests", () => {
+    it("reuses the UUID after a lost response, then uses a fresh UUID for a new action", async () => {
+      await s().setCurrentUser(null);
+      await s().syncState();
+      const originalFetch = globalThis.fetch;
+      const ids: string[] = [];
+      let dropFirstResponse = true;
+      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith("/api/v1/loans/checkout")) {
+          const body = JSON.parse(String(init?.body)) as { requestId: string };
+          ids.push(body.requestId);
+          if (dropFirstResponse) {
+            dropFirstResponse = false;
+            return Promise.reject(new TypeError("Network response was lost"));
+          }
+        }
+        return originalFetch(input, init);
+      }));
+      expect((await s().checkout(1001, 5001, 2001)).ok).toBe(false);
+      expect((await s().checkout(1001, 5001, 2001)).ok).toBe(true);
+      expect((await s().checkout(1001, 5001, 2001)).ok).toBe(true);
+      expect(ids).toHaveLength(3);
+      expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/i);
+      expect(ids[1]).toBe(ids[0]);
+      expect(ids[2]).not.toBe(ids[0]);
+    });
+
+    it("does not treat a failed initial state request as an empty library", async () => {
+      await s().setCurrentUser(null);
+      const originalFetch = globalThis.fetch;
+      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith("/api/v1/library/state")) {
+          return Promise.resolve(mockJsonResponse({ message: "DB 일시 장애" }, 503));
+        }
+        return originalFetch(input, init);
+      }));
+      await expect(s().syncState()).rejects.toThrow("DB 일시 장애");
+      expect(s().currentUser?.role).toBe("LIBRARIAN");
+      expect(s().hasLoadedData).toBe(false);
+      expect(s().dataError).toContain("DB 일시 장애");
+    });
+  });
+
 describe("domain helpers, metadata and privacy", () => {
   it("normalizes ISBN-10 to ISBN-13 and rejects invalid check digits", () => {
     expect(normalizeIsbn("0-13-235088-2")).toBe("9780132350884");

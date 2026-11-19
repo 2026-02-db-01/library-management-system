@@ -41,6 +41,7 @@ interface AccountInput {
 interface LibraryStore extends LibraryData {
   currentUser: AuthenticatedUser | null;
   isInitialized: boolean;
+  hasLoadedData: boolean;
   dataError: string;
   logout: () => Promise<void>;
   dbFlowEvents: DbFlowEvent[];
@@ -118,10 +119,41 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
   let sessionVersion = 0;
   let refreshVersion = 0;
   let initialization: Promise<void> | undefined;
+  // Keep an idempotency key for an operation only while its result is unknown.
+  // A definitive response (success or client rejection) ends that attempt.
+  const pendingRequests = new Map<string, string>();
+
+  async function withRequestId<T>(
+    operation: string,
+    payload: unknown[],
+    explicitId: string | undefined,
+    send: (requestId: string) => Promise<T>,
+  ): Promise<T> {
+    if (explicitId) return send(explicitId);
+    const key = JSON.stringify([operation, ...payload]);
+    let requestId = pendingRequests.get(key);
+    if (!requestId) {
+      requestId = crypto.randomUUID();
+      pendingRequests.set(key, requestId);
+    }
+    try {
+      const result = await send(requestId);
+      pendingRequests.delete(key);
+      return result;
+    } catch (error) {
+      // Network failures and 5xx responses may arrive after a DB commit.
+      // A 4xx response is definitive; a later explicit attempt must use a new ID.
+      if (error instanceof ApiError && error.status < 500) {
+        pendingRequests.delete(key);
+      }
+      throw error;
+    }
+  }
 
   function replaceSession(currentUser: AuthenticatedUser | null) {
+    pendingRequests.clear();
     sessionVersion++;
-    set({ ...emptyData, currentUser, dbFlowEvents: [], dataError: "" });
+    set({ ...emptyData, currentUser, dbFlowEvents: [], dataError: "", hasLoadedData: false });
   }
 
   async function runAndSync(work: () => Promise<ActionResult>): Promise<ActionResult> {
@@ -145,6 +177,7 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
     ...emptyData,
     currentUser: null,
     isInitialized: false,
+    hasLoadedData: false,
     dataError: "",
     dbFlowEvents: [],
 
@@ -163,12 +196,16 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
         if (!isCurrent()) return;
         if (user?.userId !== get().currentUser?.userId ||
             user?.role !== get().currentUser?.role) {
-          set({ ...emptyData, dbFlowEvents: [] });
+          pendingRequests.clear();
+          set({ ...emptyData, dbFlowEvents: [], hasLoadedData: false });
         }
         set({ currentUser: user });
-        if (!user) return;
+        if (!user) {
+          set({ dataError: "" });
+          return;
+        }
         const data = await libraryApi.fetchState();
-        if (isCurrent()) set({ ...data, dataError: "" });
+        if (isCurrent()) set({ ...data, dataError: "", hasLoadedData: true });
       } catch (error) {
         if (!isCurrent()) return;
         if (error instanceof ApiError && (error.status === 401 || error.code === "INACTIVE_USER")) {
@@ -198,10 +235,11 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
     checkout: (memberId, copyId, _staffId, options = {}) =>
       runAndSync(
         async () => {
-          const res = await libraryApi.checkout(
-            memberId,
-            copyId,
+          const res = await withRequestId(
+            "checkout",
+            [memberId, copyId],
             options.requestId,
+            (requestId) => libraryApi.checkout(memberId, copyId, requestId),
           );
           if (Array.isArray(res.dbFlowEvents) && res.dbFlowEvents.length > 0) {
             set((s) => ({
@@ -218,11 +256,13 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
     returnLoan: (loanId, _staffId, options = {}) =>
       runAndSync(
         async () => {
-          const res = await libraryApi.returnLoan(
-            loanId,
-            Boolean(options.damaged),
-            options.reason ?? "",
+          const damaged = Boolean(options.damaged);
+          const reason = options.reason ?? "";
+          const res = await withRequestId(
+            "return",
+            [loanId, damaged, reason],
             options.requestId,
+            (requestId) => libraryApi.returnLoan(loanId, damaged, reason, requestId),
           );
           if (Array.isArray(res.dbFlowEvents) && res.dbFlowEvents.length > 0) {
             set((s) => ({
@@ -239,7 +279,12 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
     renewLoan: (loanId, _memberId, options = {}) =>
       runAndSync(
         async () => {
-          const res = await libraryApi.renewLoan(loanId, options.requestId);
+          const res = await withRequestId(
+            "renew",
+            [loanId],
+            options.requestId,
+            (requestId) => libraryApi.renewLoan(loanId, requestId),
+          );
           if (Array.isArray(res.dbFlowEvents) && res.dbFlowEvents.length > 0) {
             set((s) => ({
               dbFlowEvents: [
@@ -255,10 +300,12 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
     correctLoan: (loanId, input, options = {}) =>
       runAndSync(
         async () => {
-          const res = await libraryApi.correctLoan(loanId, {
-            ...input,
-            requestId: options.requestId,
-          });
+          const res = await withRequestId(
+            "correct",
+            [loanId, input],
+            options.requestId,
+            (requestId) => libraryApi.correctLoan(loanId, { ...input, requestId }),
+          );
           if (Array.isArray(res.dbFlowEvents) && res.dbFlowEvents.length > 0) {
             set((s) => ({
               dbFlowEvents: [

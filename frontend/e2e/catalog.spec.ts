@@ -42,3 +42,19 @@ test("catalog ISBN normalization, combined filters and twenty-row pagination", a
   await page.getByRole("button", { name: "다음", exact: true }).click();
   await expect(page.locator(".book-card")).toHaveCount(5);
 });
+
+
+test("staff catalog honors ISBN-10 and ISBN-13 deep links", async ({ page }) => {
+  const api = await installApiFixture(page);
+  for (const [role, path] of [
+    ["LIBRARIAN", "/librarian/books"],
+    ["ADMIN", "/admin/books"],
+  ] as const) {
+    api.setRole(role);
+    await page.goto(path + "?by=isbn&q=0-13-235088-2");
+    await expect(page.getByText("Clean Code", { exact: true })).toBeVisible();
+    await expect(page.getByText("Designing Data-Intensive Applications", { exact: true })).toHaveCount(0);
+    await page.getByRole("textbox", { name: "도서 검색" }).fill("invalid");
+    await expect(page.getByText("ISBN-10/13 형식과 체크디지트를 확인하세요.")).toBeVisible();
+  }
+});

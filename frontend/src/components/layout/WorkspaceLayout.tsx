@@ -1,4 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
+import { useState } from "react";
+import { useLibraryStore } from "../../store/libraryStore";
 import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -78,6 +80,24 @@ export function WorkspaceLayout({
 }) {
   const config = workspaceConfig[section];
   const location = useLocation();
+  const currentUser = useLibraryStore((state) => state.currentUser);
+  const hasLoadedData = useLibraryStore((state) => state.hasLoadedData);
+  const dataError = useLibraryStore((state) => state.dataError);
+  const syncState = useLibraryStore((state) => state.syncState);
+  const [retrying, setRetrying] = useState(false);
+  const showUnavailable = currentUser !== null && !hasLoadedData && !!dataError;
+
+  async function retryLoad() {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await syncState();
+    } catch {
+      // The store exposes the failure in dataError; keep the retry view visible.
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   return (
     <div className={`workspace-shell workspace-${section}`}>
@@ -104,7 +124,18 @@ export function WorkspaceLayout({
         </nav>
       </aside>
       <main className="workspace-content" key={location.pathname}>
-        {children}
+        {showUnavailable ? (
+          <section role="alert" aria-label="업무 데이터 조회 실패">
+            <h1>업무 데이터를 불러오지 못했습니다.</h1>
+            <p>서버 조회에 실패했습니다. 실제 회원·도서·대출 건수가 0이라는 뜻이 아닙니다.</p>
+            <p>{dataError}</p>
+            <button type="button" onClick={retryLoad} disabled={retrying}>
+              {retrying ? "재시도 중…" : "다시 시도"}
+            </button>
+          </section>
+        ) : (
+          children
+        )}
       </main>
     </div>
   );
