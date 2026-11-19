@@ -170,52 +170,6 @@ export function AccountPage() {
   );
 }
 
-export function SignupPage() {
-  const s = useLibraryStore(),
-    [v, setV] = useState({ loginId: "", fullName: "", contact: "" }),
-    [busy, setBusy] = useState(false),
-    [result, setResult] = useState<ActionResult | null>(null);
-  return (
-    <main className="signup-page">
-      <PageHeading
-        title="회원가입"
-        description="관리자 승인 없이 일반 회원으로 가입합니다."
-      />
-      <Card>
-        <form
-          className="modal-form"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (busy) return;
-            setBusy(true);
-            try {
-              const r = await s.addMember(v);
-              setResult(r);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {(["loginId", "fullName", "contact"] as const).map((key, i) => (
-            <Field key={key} label={["로그인 ID", "이름", "연락처"][i]}>
-              <input
-                required
-                value={v[key]}
-                onChange={(e) => setV({ ...v, [key]: e.target.value })}
-              />
-            </Field>
-          ))}
-          <Button type="submit" disabled={busy}>
-            {busy ? "가입 중…" : "일반 회원 가입"}
-          </Button>
-        </form>
-        <Result value={result} />
-        <a href="/">홈으로</a>
-      </Card>
-    </main>
-  );
-}
-
 export function AccountsPage() {
   const s = useLibraryStore(),
     [query, setQuery] = useState(""),
@@ -417,7 +371,6 @@ export function CopiesPage() {
     [target, setTarget] = useState<number | null>(null),
     [status, setStatus] = useState<RecordStatus>("DAMAGED"),
     [reason, setReason] = useState(""),
-    [failure, setFailure] = useState(false),
     [busy, setBusy] = useState(false),
     [result, setResult] = useState<ActionResult | null>(null);
   return (
@@ -498,14 +451,6 @@ export function CopiesPage() {
           <Field label="사유">
             <input value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
-          <label>
-            <input
-              type="checkbox"
-              checked={failure}
-              onChange={(e) => setFailure(e.target.checked)}
-            />{" "}
-            이력 저장 실패 시연
-          </label>
           <Result value={result} />
           <ModalFooter>
             <Button
@@ -518,7 +463,6 @@ export function CopiesPage() {
                     target,
                     status,
                     reason,
-                    failure,
                   );
                   setResult(r);
                   if (r.ok) setTarget(null);
@@ -543,8 +487,7 @@ export function CorrectionsPage() {
     [reason, setReason] = useState(""),
     [physical, setPhysical] = useState(false),
     [busy, setBusy] = useState(false),
-    [result, setResult] = useState<ActionResult | null>(null),
-    [failure, setFailure] = useState(false);
+    [result, setResult] = useState<ActionResult | null>(null);
 
   const activeLoanId = s.loans.some((l) => l.loanId === id)
     ? id
@@ -567,7 +510,6 @@ export function CorrectionsPage() {
               const r = await s.correctLoan(
                 activeLoanId,
                 { type, reason, physicalConfirmed: physical },
-                { simulateFailure: failure },
               );
               setResult(r);
             } finally {
@@ -618,14 +560,6 @@ export function CorrectionsPage() {
               onChange={(e) => setPhysical(e.target.checked)}
             />{" "}
             실물 회수 또는 실제 미반출을 확인했습니다.
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={failure}
-              onChange={(e) => setFailure(e.target.checked)}
-            />{" "}
-            이력 저장 실패 · 전체 롤백 시연
           </label>
           <Button type="submit" disabled={busy}>
             {busy ? "정정 중…" : "정정 확정"}
