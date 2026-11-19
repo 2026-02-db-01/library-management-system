@@ -84,7 +84,6 @@ interface LibraryStore extends LibraryData {
   setUserRole: (id: number, role: UserRole) => Promise<ActionResult>;
   addAuthor: (name: string) => Promise<ActionResult>;
   renameAuthor: (id: number, name: string) => Promise<ActionResult>;
-  addMember: (v: AccountInput) => Promise<ActionResult>;
   addStaff: (v: AccountInput & { role: "LIBRARIAN" | "ADMIN" }) => Promise<ActionResult>;
   updateProfile: (
     id: number,
@@ -242,10 +241,8 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
         set({ roleSwitchTarget: target });
         return;
       }
-      set({
-        demoRole: role,
-        roleSwitchTarget: target,
-      });
+      // Never allow a route request to switch the authenticated identity.
+      return;
     },
 
     completeRoleSwitch: () => set({ roleSwitchTarget: null }),
@@ -372,17 +369,6 @@ export const useLibraryStore = create<LibraryStore>()((set, get) => {
       runAndSync(async () => {
         await libraryApi.renameAuthor(id, name);
         return ok("저자명과 연결 서지 이력을 저장했습니다.");
-      }),
-
-    addMember: (v) =>
-      runAndSync(async () => {
-        await httpAuthTransport.signup({
-          loginId: v.loginId,
-          password: "password123",
-          fullName: v.fullName,
-          contact: v.contact,
-        });
-        return ok("회원가입이 완료되었습니다.");
       }),
 
     addStaff: (v) =>
