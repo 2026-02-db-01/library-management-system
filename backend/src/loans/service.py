@@ -86,6 +86,20 @@ def _recalculate_member_suspension(db: Session, member: User) -> datetime | None
     return member.borrowing_suspended_until
 
 
+def _lock_loan(db: Session, loan_id: int) -> Loan | None:
+    # Order matches checkout and withdrawal: member, then loan, then copy.
+    member_id = db.scalar(select(Loan.member_user_id).where(Loan.loan_id == loan_id))
+    if member_id is not None:
+        db.scalar(
+            select(User).where(User.user_id == member_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
+    return db.scalar(
+        select(Loan).where(Loan.loan_id == loan_id)
+        .with_for_update().execution_options(populate_existing=True)
+    )
+
+
 def _loan_snapshot(loan: Loan | None) -> dict[str, Any]:
     if loan is None:
         return {}
@@ -133,6 +147,8 @@ def _validate_and_hash_request(
     )
     fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    lock_key = int.from_bytes(parsed_uuid.bytes[:8], byteorder="big", signed=True)
+    db.execute(select(func.pg_advisory_xact_lock(lock_key)))
     prior = db.get(RequestRecord, req_id)
     if prior is not None:
         if prior.actor_user_id != actor_user_id or prior.request_fingerprint != fingerprint:
@@ -376,7 +392,7 @@ def return_loan(
             loan_id=loan_id,
         )
 
-    loan = db.scalar(select(Loan).where(Loan.loan_id == loan_id).with_for_update())
+    loan = _lock_loan(db, loan_id)
     if loan is None or not _is_active_loan(loan):
         raise ConflictException(
             code="INVALID_ACTIVE_LOAN",
@@ -413,6 +429,7 @@ def return_loan(
             )
             copy.management_status = "DAMAGED"
 
+    db.flush()
     if loan.member_user_id is not None:
         member = db.get(User, loan.member_user_id)
         if member is not None:
@@ -470,7 +487,7 @@ def renew_loan(
             loan_id=loan_id,
         )
 
-    loan = db.scalar(select(Loan).where(Loan.loan_id == loan_id).with_for_update())
+    loan = _lock_loan(db, loan_id)
     today = _kst_date()
 
     if loan is None or loan.member_user_id != member_id or not _is_active_loan(loan):
@@ -574,7 +591,7 @@ def correct_loan(
             loan_id=loan_id,
         )
 
-    loan = db.scalar(select(Loan).where(Loan.loan_id == loan_id).with_for_update())
+    loan = _lock_loan(db, loan_id)
     if loan is None or loan.is_cancelled or not payload.reason.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -608,6 +625,7 @@ def correct_loan(
                 message="탈퇴 회원 또는 미반납 건은 반납 취소할 수 없습니다.",
             )
 
+        db.scalar(select(BookCopy).where(BookCopy.copy_id == loan.copy_id).with_for_update())
         subsequent_loan = db.scalar(
             select(Loan).where(
                 Loan.loan_id != loan.loan_id,
@@ -658,6 +676,7 @@ def correct_loan(
             },
         )
 
+    db.flush()
     if loan.member_user_id is not None:
         member = db.get(User, loan.member_user_id)
         if member is not None:

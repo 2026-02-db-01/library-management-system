@@ -1,5 +1,5 @@
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.books.service import contains_patron_identity
@@ -111,7 +111,11 @@ def update_own_profile(
 
 
 def withdraw_member_account(db: Session, current_user: User) -> UserActionResponse:
-    if current_user.role != "MEMBER" or current_user.account_status != "ACTIVE":
+    current_user = db.scalar(
+        select(User).where(User.user_id == current_user.user_id)
+        .with_for_update().execution_options(populate_existing=True)
+    )
+    if current_user is None or current_user.role != "MEMBER" or current_user.account_status != "ACTIVE":
         raise ForbiddenException(
             code="MEMBER_ONLY_ACTION",
             message="활성 회원 본인만 탈퇴할 수 있습니다.",
@@ -143,7 +147,8 @@ def withdraw_member_account(db: Session, current_user: User) -> UserActionRespon
         select(RequestRecord).where(RequestRecord.actor_user_id == current_user.user_id)
     ).all():
         req.actor_user_id = None
-        req.response_snapshot = {"ok": True}
+        if req.response_snapshot is not None:
+            req.response_snapshot = {"ok": req.processing_status == "COMPLETED"}
 
     current_user.login_id = None
     current_user.password_hash = None
@@ -215,7 +220,23 @@ def toggle_staff_account_status(
     payload: StaffStatusUpdateRequest,
     admin_user_id: int,
 ) -> UserActionResponse:
-    target = db.scalar(select(User).where(User.user_id == target_user_id).with_for_update())
+    # Lock administrator rows in the same order before locking a non-admin target.
+    admins = {
+        user.user_id: user
+        for user in db.scalars(
+            select(User).where(User.role == "ADMIN").order_by(User.user_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
+    }
+    actor = admins.get(admin_user_id)
+    if actor is None or actor.account_status != "ACTIVE":
+        raise ForbiddenException(code="INACTIVE_USER", message="활성 관리자만 직원 상태를 변경할 수 있습니다.")
+    target = admins.get(target_user_id)
+    if target is None:
+        target = db.scalar(
+            select(User).where(User.user_id == target_user_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
     if target is None or target.role == "MEMBER" or target.account_status == "WITHDRAWN":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -236,14 +257,7 @@ def toggle_staff_account_status(
         )
 
     if target.role == "ADMIN" and target.account_status == "ACTIVE":
-        active_admin_count = (
-            db.scalar(
-                select(func.count())
-                .select_from(User)
-                .where(User.role == "ADMIN", User.account_status == "ACTIVE")
-            )
-            or 0
-        )
+        active_admin_count = sum(user.account_status == "ACTIVE" for user in admins.values())
         if active_admin_count <= 1:
             raise ConflictException(
                 code="LAST_ACTIVE_ADMIN",

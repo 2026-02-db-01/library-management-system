@@ -361,8 +361,12 @@ def search_books(
     year_from: int | None = None,
     year_to: int | None = None,
     availability: str = "",
+    title: str = "",
+    public_only: bool = False,
 ) -> list[BookDetailResponse]:
-    stmt = select(Book).order_by(Book.book_id.asc())
+    stmt = select(Book).order_by(Book.title.asc(), Book.book_id.asc())
+    if title.strip():
+        stmt = stmt.where(Book.title.icontains(title.strip(), autoescape=True))
     if isbn.strip():
         try:
             norm_isbn = normalize_isbn(isbn)
@@ -384,6 +388,8 @@ def search_books(
 
     for b in books:
         detail = get_book_detail(db, b.book_id)
+        if public_only and all(copy.management_status == "RETIRED" for copy in detail.copies):
+            continue
         if author_q:
             joined_authors = " ".join(a.author_name for a in detail.authors).lower()
             if author_q not in joined_authors:
@@ -405,12 +411,12 @@ def add_copy(db: Session, book_id: int) -> BookCopy:
             detail={"code": "BOOK_NOT_FOUND", "message": "도서를 찾을 수 없습니다."},
         )
 
-    max_id = db.scalar(select(func.coalesce(func.max(BookCopy.copy_id), 0))) or 0
-    serial = max_id + 1
-    while db.scalar(select(BookCopy).where(BookCopy.copy_code == f"CD-{serial}")) is not None:
-        serial += 1
+    serial = db.scalar(select(func.nextval(func.pg_get_serial_sequence("book_copy", "copy_id"))))
+    while db.scalar(select(BookCopy.copy_id).where(BookCopy.copy_code == f"CD-{serial}")) is not None:
+        serial = db.scalar(select(func.nextval(func.pg_get_serial_sequence("book_copy", "copy_id"))))
 
     copy = BookCopy(
+        copy_id=serial,
         book_id=book_id,
         copy_code=f"CD-{serial}",
         management_status="ACTIVE",
@@ -427,7 +433,7 @@ def change_copy_status(
     payload: CopyStatusUpdateRequest,
     librarian_id: int,
 ) -> BookCopy:
-    copy = db.get(BookCopy, copy_id)
+    copy = db.scalar(select(BookCopy).where(BookCopy.copy_id == copy_id).with_for_update())
     if copy is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
