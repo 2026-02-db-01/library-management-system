@@ -1,4 +1,4 @@
-import { addDays, getKoreanDate } from "../data/mock/seed";
+import { addDays, getKoreanDate } from "./korean-date";
 import type {
   Author,
   Book,

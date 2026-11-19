@@ -29,7 +29,14 @@ export async function apiRequest<T>(
   }
 
   const text = await response.text()
-  const data = text ? JSON.parse(text) : null
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw new ApiError(response.status, response.ok
+      ? "서버 응답 형식이 올바르지 않습니다."
+      : `서버 요청에 실패했습니다. (${response.status})`);
+  }
 
   if (!response.ok) {
     const message =

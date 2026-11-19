@@ -46,6 +46,9 @@ beforeEach(() => {
     if (url.endsWith("/api/v1/library/state")) {
       return Promise.resolve(mockJsonResponse(seed));
     }
+    if (url.endsWith("/api/v1/loans/9001/return")) {
+      return Promise.resolve(mockJsonResponse({ message: "반납 충돌" }, 409));
+    }
     if (url.endsWith("/api/v1/loans/checkout")) {
       return Promise.resolve(
         mockJsonResponse(
@@ -73,8 +76,8 @@ describe("API-connected libraryStore", () => {
   it("hydrates authenticated session and 12 library tables on initialize", async () => {
     await s().initialize();
     expect(s().isInitialized).toBe(true);
-    expect(s().demoRole).toBe("LIBRARIAN");
-    expect(s().demoLibrarianId).toBe(2001);
+    expect(s().currentUser?.role).toBe("LIBRARIAN");
+    expect(s().currentUser?.userId).toBe(2001);
     expect(s().books.length).toBeGreaterThan(0);
   });
 
@@ -85,12 +88,15 @@ describe("API-connected libraryStore", () => {
     expect(res.loanId).toBe(9901);
   });
 
-  it("aborts and records rollback event when simulateFailure is set", async () => {
+  it("keeps state and reports server conflict without fabricating a rollback", async () => {
     await s().initialize();
     s().clearDbFlowEvents();
-    const res = await s().returnLoan(9001, 2001, { simulateFailure: true });
+    const loans = s().loans;
+    const res = await s().returnLoan(9001, 2001);
     expect(res.ok).toBe(false);
-    expect(s().dbFlowEvents.at(-1)?.operation).toBe("ROLLBACK");
+    expect(res.message).toBe("반납 충돌");
+    expect(s().loans).toEqual(loans);
+    expect(s().dbFlowEvents).toEqual([]);
   });
 });
 

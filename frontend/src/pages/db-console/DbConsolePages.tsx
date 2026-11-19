@@ -159,7 +159,7 @@ export function SchemaMetadataPage() {
         이 화면은 스키마 설계 설명입니다. 테이블 행을 조회하거나 SQL을 실행하지
         않습니다.
       </Notice>
-      <Notice tone="info" title="Mock 설계·SQL 예시">
+      <Notice tone="info" title="설계 참고 · SQL 예시">
         실제 SQL 실행은 없습니다. 제약명은 최신 DDL 미확보로 설명용 이름을
         사용합니다. 비밀번호 해시·회원 이름·로그인 ID·연락처·개인 대출 연결은
         미리보기에 제공하지 않습니다. 사서 전용 감사 데이터는 관리자에게
@@ -660,9 +660,9 @@ function DbTableDetail({ tableName }: { tableName: TableName }) {
         <div className="table-card-heading">
           <SectionHeading
             title="데이터 미리보기"
-            description={`공유 Mock Store의 ${allRows.length}개 행 · 실제 DB 접속 없음`}
+            description={`서비스 API가 제공한 ${allRows.length}개 행 · 표시용 필드 제한`}
           />
-          <Badge tone="blue">DEMO ROWS</Badge>
+          <Badge tone="blue">API ROWS</Badge>
         </div>
         <div className="preview-toolbar">
           <label className="catalog-search-input">
@@ -796,8 +796,7 @@ function DbTableDetail({ tableName }: { tableName: TableName }) {
         </div>
       </Card>
       <Notice tone="warning" title="읽기 전용 프리뷰">
-        SQL 실행, DB 연결, 변경 쿼리는 제공하지 않습니다. 데이터 미리보기는 Mock
-        Store에서 파생됩니다.
+        SQL 실행, DB 연결, 변경 쿼리는 제공하지 않습니다. 데이터 미리보기는 서비스 API 응답에서 표시용 필드를 추립니다.
       </Notice>
     </WorkspaceLayout>
   );

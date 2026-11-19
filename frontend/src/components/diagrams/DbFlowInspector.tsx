@@ -145,7 +145,7 @@ export function DbFlowInspector({
               {selected.tableId ?? "transaction"}
             </span>
             <p>{selected.message}</p>
-            <pre className="flow-sql-example">{`-- Mock SQL 예시 · 실행하지 않음\n${selected.operation === "COMMIT" || selected.operation === "ROLLBACK" ? selected.operation + ";" : selected.operation === "SELECT" ? `SELECT ${selected.columnIds?.join(", ") || "*"} FROM ${selected.tableId || "loan"};` : selected.operation === "INSERT" ? `INSERT INTO ${selected.tableId || "loan"} (...) VALUES (...);` : `UPDATE ${selected.tableId || "loan"} SET ... WHERE loan_id = :loan_id;`}`}</pre>
+            <pre className="flow-sql-example">{`-- SQL 예시 · 실행하지 않음\n${selected.operation === "COMMIT" || selected.operation === "ROLLBACK" ? selected.operation + ";" : selected.operation === "SELECT" ? `SELECT ${selected.columnIds?.join(", ") || "*"} FROM ${selected.tableId || "loan"};` : selected.operation === "INSERT" ? `INSERT INTO ${selected.tableId || "loan"} (...) VALUES (...);` : `UPDATE ${selected.tableId || "loan"} SET ... WHERE loan_id = :loan_id;`}`}</pre>
             {selected.columnIds?.length ? (
               <div className="flow-current-columns">
                 컬럼 <code>{selected.columnIds.join(" · ")}</code>
@@ -224,7 +224,7 @@ export function DbFlowTimeline({
       <header className="db-flow-timeline-header">
         <div>
           <span className="eyebrow">DATABASE EVENT TIMELINE</span>
-          <h2>업무 단계와 Mock DB 이벤트</h2>
+          <h2>서버 응답의 업무 단계</h2>
           <span className="timeline-simulation-tag">시뮬레이션</span>
         </div>
         {collapsed && latest && (
@@ -254,7 +254,7 @@ export function DbFlowTimeline({
               <section
                 className="db-flow-run"
                 key={run.runId}
-                aria-label={`Mock 실행 ${run.runId}`}
+                aria-label={`업무 요청 ${run.runId}`}
               >
                 <div className="db-flow-run-label">
                   <strong>

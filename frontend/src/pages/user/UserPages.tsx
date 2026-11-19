@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   BookMarked,
   CalendarDays,
@@ -67,9 +67,6 @@ export function UserBooksPage() {
     "all" | "available" | "unavailable"
   >("all");
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
-  const recordDbFlowEvents = useLibraryStore(
-    (state) => state.recordDbFlowEvents,
-  );
   const normalized = query.trim().toLocaleLowerCase();
   let isbnError = "";
   if (searchBy === "isbn" && query.trim()) {
@@ -156,54 +153,6 @@ export function UserBooksPage() {
 
   function inspectBook(book: Book) {
     setSelectedBook(book);
-    recordDbFlowEvents([
-      {
-        operation: "SELECT",
-        tableId: "book",
-        columnIds: [
-          "book_id",
-          "isbn",
-          "title",
-          "publisher",
-          "publication_year",
-        ],
-        message: "검색 조건에 맞는 서지정보를 조회합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "book_author",
-        columnIds: ["book_id", "author_id"],
-        relationId: "book-book_author",
-        message: "도서 ID로 연결된 저자 식별자를 조회합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "author",
-        columnIds: ["author_id", "author_name"],
-        relationId: "author-book_author",
-        message: "연결된 저자의 이름을 조회합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "book_copy",
-        columnIds: ["copy_id", "copy_code", "management_status"],
-        relationId: "book-book_copy",
-        message: "도서 ID에 속한 실물 소장본과 관리 상태를 확인합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "loan",
-        columnIds: ["copy_id", "returned_at"],
-        relationId: "book_copy-loan",
-        message:
-          "각 소장본의 미반납 loan을 확인해 대출 가능 수량을 계산합니다. book에서 loan으로 직접 연결되는 FK는 없습니다.",
-        status: "success",
-      },
-    ]);
   }
 
   return (
@@ -490,9 +439,9 @@ export function UserBooksPage() {
 
 export function UserLoansPage() {
   const state = useLibraryStore();
-  const member = state.users.find((user) => user.userId === state.demoMemberId);
+  const member = state.users.find((user) => user.userId === state.currentUser?.userId);
   const memberLoans = state.loans.filter(
-    (loan) => loan.memberUserId === state.demoMemberId,
+    (loan) => loan.memberUserId === state.currentUser?.userId,
   );
   const current = memberLoans
     .filter((loan) => !loan.isCancelled && loan.returnedAt === null)
@@ -502,43 +451,7 @@ export function UserLoansPage() {
     .sort((a, b) => (b.returnedAt ?? "").localeCompare(a.returnedAt ?? ""));
   const [result, setResult] = useState<ActionResult | null>(null);
   const renewLoan = useLibraryStore((store) => store.renewLoan);
-  const recordDbFlowEvents = useLibraryStore(
-    (store) => store.recordDbFlowEvents,
-  );
 
-  useEffect(() => {
-    recordDbFlowEvents([
-      {
-        operation: "SELECT",
-        tableId: "app_user",
-        columnIds: ["user_id", "role", "account_status"],
-        message: "현재 로그인한 회원 계정을 확인합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "loan",
-        columnIds: [
-          "member_user_id",
-          "copy_id",
-          "borrowed_at",
-          "current_due_date",
-          "returned_at",
-        ],
-        relationId: "app_user-loan-member",
-        message: "회원 ID로 현재 대출과 과거 이력을 조회합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "loan_renewal",
-        columnIds: ["loan_id", "previous_due_date", "new_due_date"],
-        relationId: "loan-loan_renewal",
-        message: "대출 연장 이력을 연결해 남은 연장 가능 여부를 확인합니다.",
-        status: "success",
-      },
-    ]);
-  }, [recordDbFlowEvents, state.demoMemberId]);
 
   function titleFor(loan: Loan) {
     return getBookForCopy(loan.copyId, state)?.title ?? "도서 정보 없음";
@@ -598,7 +511,7 @@ export function UserLoansPage() {
                 canRenew(loan, state.renewals) &&
                 !state.loans.some(
                   (other) =>
-                    other.memberUserId === state.demoMemberId &&
+                    other.memberUserId === state.currentUser?.userId &&
                     isOverdue(other),
                 );
               return (
@@ -640,7 +553,7 @@ export function UserLoansPage() {
                         variant="secondary"
                         disabled={!eligible}
                         onClick={async () =>
-                          setResult(await renewLoan(loan.loanId, state.demoMemberId))
+                          setResult(await renewLoan(loan.loanId, loan.memberUserId!))
                         }
                         icon={<CalendarClock size={14} />}
                       >

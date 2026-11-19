@@ -117,6 +117,7 @@ export const libraryApi = {
     fullName: string
     contact: string
     role: 'LIBRARIAN' | 'ADMIN'
+    password: string
   }): Promise<ActionResult> {
     return apiRequest<ActionResult>('/api/v1/users/staff', {
       method: 'POST',

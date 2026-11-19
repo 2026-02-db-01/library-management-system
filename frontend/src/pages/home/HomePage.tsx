@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowRight, BookOpen, BookMarked, History, RefreshCw, Search } from "lucide-react";
 import { useLibraryStore } from "../../store/libraryStore";
-import { httpAuthTransport } from "../../api/http-auth";
 import { AuthForm } from "../AuthPages";
 import "./home.css";
 
@@ -17,9 +16,7 @@ export function HomePage() {
   const memberLink = (to: string) => role === "MEMBER" ? to : `/login?next=${encodeURIComponent(to)}`;
   async function logout() {
     try {
-      await httpAuthTransport.logout();
-      await useLibraryStore.getState().setCurrentUser(null);
-      useLibraryStore.setState({ roleSwitchTarget: null, dbFlowEvents: [] });
+      await useLibraryStore.getState().logout();
       navigate("/");
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "로그아웃에 실패했습니다.");

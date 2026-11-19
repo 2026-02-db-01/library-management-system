@@ -1,9 +1,12 @@
+import { installApiFixture } from "./api-fixture";
 import { expect, test } from "@playwright/test";
 
 test("registration validates inputs before contacting server", async ({ page }) => {
+  await installApiFixture(page);
   let requested = false;
   await page.route("**/api/v1/auth/signup", async route => {
     requested = true;
+    expect(route.request().postDataJSON()).toEqual({ loginId: "reader", password: "secret", fullName: "회원", contact: "01012345678" });
     await route.fulfill({
       status: 503,
       contentType: "application/json",
@@ -25,6 +28,7 @@ test("registration validates inputs before contacting server", async ({ page }) 
 });
 
 test("invalid server credentials do not authenticate", async ({ page }) => {
+  await installApiFixture(page);
   await page.route("**/api/v1/auth/login", async route => {
     await route.fulfill({
       status: 401,
@@ -41,6 +45,7 @@ test("invalid server credentials do not authenticate", async ({ page }) => {
 });
 
 test("legacy demo signup route is not exposed", async ({ page }) => {
+  await installApiFixture(page);
   await page.goto("/signup/demo");
   await expect(page.getByRole("heading", { name: "회원가입 데모" })).toHaveCount(0);
 });

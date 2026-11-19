@@ -22,20 +22,15 @@ const DbFlowTimeline = lazy(() =>
     default: m.DbFlowTimeline,
   })),
 );
-import { httpAuthTransport } from "../../api/http-auth";
 import { useLibraryStore } from "../../store/libraryStore";
 import { LibraryNav } from "./LibraryNav";
 
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const resetDemo = useLibraryStore((state) => state.resetDemo);
-  const setCurrentUser = useLibraryStore((state) => state.setCurrentUser);
-  const demoRole = useLibraryStore((state) => state.demoRole);
-  const completeRoleSwitch = useLibraryStore(
-    (state) => state.completeRoleSwitch,
-  );
-  const roleSwitchTarget = useLibraryStore((state) => state.roleSwitchTarget);
+  const syncState = useLibraryStore((state) => state.syncState);
+  const role = useLibraryStore((state) => state.currentUser?.role ?? null);
+  const dataError = useLibraryStore((state) => state.dataError);
   const events = useLibraryStore((state) => state.dbFlowEvents);
   const [notice, setNotice] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -62,11 +57,6 @@ export function AppShell() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-
-  useEffect(() => {
-    if (!roleSwitchTarget || location.pathname !== roleSwitchTarget) return;
-    completeRoleSwitch();
-  }, [completeRoleSwitch, location.pathname, roleSwitchTarget]);
 
   useEffect(() => {
     return useLibraryStore.subscribe((state, previous) => {
@@ -118,7 +108,11 @@ export function AppShell() {
   ]);
 
   async function handleReset() {
-    await resetDemo();
+    try {
+      await syncState();
+    } catch {
+      return;
+    }
     setFlowOpen(false);
     setMobileFlowTab("work");
     navigate("/");
@@ -128,12 +122,12 @@ export function AppShell() {
 
   async function logout() {
     try {
-      await httpAuthTransport.logout();
-    } catch {
-      // 세션이 이미 만료된 경우에도 클라이언트 상태는 초기화
+      await useLibraryStore.getState().logout();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "로그아웃에 실패했습니다.");
+      return;
     }
-    await setCurrentUser(null);
-    useLibraryStore.setState({ roleSwitchTarget: null, dbFlowEvents: [] });
+    setNotice("");
     setMobileMenuOpen(false);
     navigate("/");
   }
@@ -194,20 +188,20 @@ export function AppShell() {
               <small>LIBRARY SYSTEM</small>
             </span>
           </Link>
-          <LibraryNav role={demoRole} />
+          <LibraryNav role={role} />
           <div className="header-tools">
-            {demoRole && (
+            {role && (
               <button className="header-reset" onClick={logout}>
                 로그아웃
               </button>
             )}
             <Link
               className="top-nav-link"
-              to={demoRole ? "/account" : "/signup"}
+              to={role ? "/account" : "/signup"}
             >
-              {demoRole ? "내 계정" : "회원가입"}
+              {role ? "내 계정" : "회원가입"}
             </Link>
-            {!demoRole && (
+            {!role && (
               <Link className="top-nav-link" to="/login">
                 로그인
               </Link>
@@ -246,11 +240,11 @@ export function AppShell() {
         {mobileMenuOpen && (
           <div className="mobile-nav">
             <LibraryNav
-              role={demoRole}
+              role={role}
               mobile
               onNavigate={() => setMobileMenuOpen(false)}
             />
-            {demoRole ? (
+            {role ? (
               <button onClick={logout}>로그아웃</button>
             ) : (
               <>
@@ -266,6 +260,7 @@ export function AppShell() {
           </div>
         )}
       </header>
+      {dataError && <p className="global-toast" role="alert">{dataError}</p>}
       {notice && (
         <div className="global-toast" role="status">
           {notice}

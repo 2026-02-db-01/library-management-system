@@ -126,15 +126,13 @@ function RoleRoute({
   role: UserRole;
   children: ReactNode;
 }) {
-  const selectedRole = useLibraryStore((state) => state.currentUser?.role ?? null);
-  const roleSwitchTarget = useLibraryStore((state) => state.roleSwitchTarget);
+  const user = useLibraryStore((state) => state.currentUser);
   const location = useLocation();
-  const active = useLibraryStore((state) =>
-    state.currentUser?.role === role && state.currentUser.accountStatus === "ACTIVE"
-  );
-  if (roleSwitchTarget && location.pathname !== roleSwitchTarget) return null;
-  if (selectedRole !== role || !active)
-    return <Navigate to="/" replace state={{ requiredRole: role }} />;
+  if (!user || user.accountStatus !== "ACTIVE") {
+    const next = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/login?next=${next}`} replace />;
+  }
+  if (user.role !== role) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -179,7 +177,7 @@ function App() {
                     <AccountPage key={role} />
                   </RoleRoute>
                 ) : (
-                  <Navigate to="/" replace />
+                  <Navigate to="/login?next=%2Faccount" replace />
                 )
               }
             />
