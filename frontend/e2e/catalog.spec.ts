@@ -43,18 +43,35 @@ test("catalog ISBN normalization, combined filters and twenty-row pagination", a
   await expect(page.locator(".book-card")).toHaveCount(5);
 });
 
-
 test("staff catalog honors ISBN-10 and ISBN-13 deep links", async ({ page }) => {
   const api = await installApiFixture(page);
+  const noIsbnBook = { ...api.data.books[0], bookId: 999, title: "ISBN 없는 자료", isbn: null };
+  api.data.books.push(noIsbnBook);
+  api.data.copies.push({ copyId: 9999, bookId: 999, copyCode: "QA-COPY", managementStatus: "ACTIVE" });
+
   for (const [role, path] of [
     ["LIBRARIAN", "/librarian/books"],
     ["ADMIN", "/admin/books"],
   ] as const) {
     api.setRole(role);
     await page.goto(path + "?by=isbn&q=0-13-235088-2");
-    await expect(page.getByText("Clean Code", { exact: true })).toBeVisible();
-    await expect(page.getByText("Designing Data-Intensive Applications", { exact: true })).toHaveCount(0);
-    await page.getByRole("textbox", { name: "도서 검색" }).fill("invalid");
+    const search = page.getByRole("textbox", { name: "도서 검색" });
+    const rows = page.locator("tbody");
+    for (const isbn of ["0-13-235088-2", "9780132350884", "978-0-13-235088-4", "978 0 13 235088 4"]) {
+      await search.fill(isbn);
+      await expect(rows.getByText("Clean Code", { exact: true })).toBeVisible();
+      await expect(rows.getByText("ISBN 없는 자료")).toHaveCount(0);
+      expect(new URL(page.url()).searchParams.get("by")).toBe("isbn");
+      expect(new URL(page.url()).searchParams.get("q")).toBe(isbn);
+    }
+    await search.fill("9780132350885");
     await expect(page.getByText("ISBN-10/13 형식과 체크디지트를 확인하세요.")).toBeVisible();
+    await expect(rows.getByText("Clean Code")).toHaveCount(0);
+
+    await page.goto(path + "?by=title&q=ISBN%20없는");
+    await expect(rows.getByText("ISBN 없는 자료")).toBeVisible();
+    await page.goto(path + "?by=author&q=Martin");
+    await expect(rows.getByText("Clean Code", { exact: true })).toBeVisible();
+    await expect(rows.getByText("ISBN 없는 자료")).toHaveCount(0);
   }
 });

@@ -299,6 +299,7 @@ export function AdminBooksPage() {
       if (!searchText) return true;
       if (searchBy === "isbn") return book.isbn !== null && book.isbn === normalizedIsbn;
       if (searchBy === "author") return authors.toLocaleLowerCase().includes(searchText);
+      if (searchBy === "title") return book.title.toLocaleLowerCase().includes(searchText);
       return (
         `${book.title} ${book.isbn ?? ""} ${authors}`
           .toLocaleLowerCase()
