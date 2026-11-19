@@ -2,11 +2,10 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.books.models import CopyStatusHistory
 from src.books.service import contains_patron_identity
 from src.core.exceptions import ConflictException, ForbiddenException, UnauthorizedException
 from src.core.security import hash_password, verify_password
-from src.loans.models import Loan, LoanCorrectionHistory, RequestRecord
+from src.loans.models import Loan, RequestRecord
 from src.users.models import StaffAccountHistory, User
 from src.users.schemas import (
     LibraryUserResponse,
@@ -131,37 +130,10 @@ def withdraw_member_account(db: Session, current_user: User) -> UserActionRespon
             message="미반납 도서를 모두 반납한 후 탈퇴하세요.",
         )
 
-    raw_tokens = [
-        current_user.full_name,
-        current_user.login_id,
-        current_user.contact,
-        str(current_user.user_id),
-    ]
-    # 긴 문자열(연락처·이름)을 먼저 치환하여 부분 문자열 오치환 방지
-    identity_tokens = sorted(
-        {token for token in raw_tokens if token},
-        key=len,
-        reverse=True,
-    )
-
-    def redact(text: str) -> str:
-        result = text
-        for token in identity_tokens:
-            result = result.replace(token, "[개인정보 제거]")
-        return result
-
-    for correction in db.scalars(select(LoanCorrectionHistory)).all():
-        correction.reason = redact(correction.reason)
-        if correction.evidence_reference is not None:
-            correction.evidence_reference = redact(correction.evidence_reference)
-
-    for copy_hist in db.scalars(select(CopyStatusHistory)).all():
-        copy_hist.reason = redact(copy_hist.reason)
-
-    for staff_hist in db.scalars(select(StaffAccountHistory)).all():
-        if staff_hist.reason is not None:
-            staff_hist.reason = redact(staff_hist.reason)
-
+    # 이력 테이블(loan_correction_history, copy_status_history, staff_account_history)은
+    # 고치지 않는다: DB 가 library_app 의 UPDATE 를 막아 둔 append-only 테이블이고,
+    # 사유·증빙에 회원 개인정보가 들어가는 것은 입력 시 contains_patron_identity 로 막는다.
+    # 탈퇴 시에는 대출·요청 기록의 회원 연결만 끊고 app_user 개인정보를 지운다.
     for loan in db.scalars(
         select(Loan).where(Loan.member_user_id == current_user.user_id)
     ).all():

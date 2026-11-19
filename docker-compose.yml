@@ -1,34 +1,9 @@
+# 백엔드 컨테이너 (선택). DB 는 여기서 띄우지 않는다.
+# DB 는 database/ 폴더의 compose 로 먼저 실행한다 (스키마·시드·계정 권한이 거기서 만들어짐):
+#   cd database && docker compose up -d
+# 그 다음 루트에서:
+#   docker compose --profile full up -d --build
 services:
-  db:
-    image: postgres:16-alpine
-    container_name: library-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-library_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-library_password}
-      POSTGRES_DB: ${POSTGRES_DB:-library_db}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-library_user} -d ${POSTGRES_DB:-library_db}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  db-viewer:
-    image: adminer:latest
-    container_name: library-adminer
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    environment:
-      ADMINER_DEFAULT_SERVER: db
-    depends_on:
-      db:
-        condition: service_healthy
-
   backend:
     build:
       context: ./backend
@@ -40,13 +15,15 @@ services:
     env_file:
       - .env
     environment:
-      # 컨테이너 내부에서는 localhost 대신 서비스명(db)으로 접속
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-library_user}:${POSTGRES_PASSWORD:-library_password}@db:5432/${POSTGRES_DB:-library_db}
+      # 컨테이너 안에서는 127.0.0.1:5433 대신 database/ compose 네트워크의 db:5432 로 접속
+      DATABASE_URL: postgresql+psycopg://library_app:${LIBRARY_APP_PASSWORD:?set LIBRARY_APP_PASSWORD in .env}@db:5432/library
     volumes:
       - ./backend/src:/app/src
-    depends_on:
-      db:
-        condition: service_healthy
+    networks:
+      - library_db
 
-volumes:
-  postgres_data:
+networks:
+  library_db:
+    # database/compose.yml (name: library) 가 만드는 기본 네트워크
+    name: library_default
+    external: true
