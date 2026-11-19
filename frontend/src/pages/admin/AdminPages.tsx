@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import {
   Bar,
   BarChart,
@@ -252,11 +252,21 @@ export function AdminBooksPage() {
   const saveBook = useLibraryStore((state) => state.saveBook);
   const addCopy = useLibraryStore((state) => state.addCopy);
   const toggleCopyStatus = useLibraryStore((state) => state.toggleCopyStatus);
-  const [params] = useSearchParams();
-  const [query, setQuery] = useState(() => params.get("q") ?? "");
-  useEffect(() => {
-    setQuery(params.get("q") ?? "");
-  }, [params]);
+  const [params, setParams] = useSearchParams();
+  const query = params.get("q") ?? "";
+  const setQuery = (value: string) => {
+    setParams(
+      (currentParams) => {
+        if (value) {
+          currentParams.set("q", value);
+        } else {
+          currentParams.delete("q");
+        }
+        return currentParams;
+      },
+      { replace: true },
+    );
+  };
   const searchBy = params.get("by");
   const searchText = query.trim().toLocaleLowerCase();
   let normalizedIsbn: string | null = null;
