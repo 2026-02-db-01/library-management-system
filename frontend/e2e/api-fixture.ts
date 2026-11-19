@@ -5,6 +5,8 @@ import type { UserRole } from "../src/types/domain";
 export async function installApiFixture(page: Page) {
   const data = createSeedData();
   let identity: number | null = null;
+  const passwords = new Map<number, string>();
+  const passwordFor = (userId: number) => passwords.get(userId) ?? "fixture-test-password";
   let renewalError = false;
   let dropCheckoutResponse = false;
   const completedCheckouts = new Map<string, { message: string; loanId: number }>();
@@ -27,7 +29,7 @@ export async function installApiFixture(page: Page) {
     if (path === "/auth/login") {
       if (unavailable) return error(503, "인증 서버에 연결할 수 없습니다.");
       const user = data.users.find((candidate) => candidate.loginId === body.loginId &&
-        candidate.accountStatus === "ACTIVE" && body.password === "fixture-test-password");
+        candidate.accountStatus === "ACTIVE" && body.password === passwordFor(candidate.userId));
       if (!user) return error(401, "아이디 또는 비밀번호가 올바르지 않습니다.");
       identity = user.userId;
       return reply(200, user);
@@ -38,6 +40,14 @@ export async function installApiFixture(page: Page) {
       return route.fulfill({ status: 204 });
     }
     if (!actor) return error(401, "로그인이 필요합니다.");
+    if (path === "/auth/change-password" && method === "POST") {
+      if (body.currentPassword !== passwordFor(actor.userId)) {
+        return reply(400, { code: "CURRENT_PASSWORD_MISMATCH", message: "현재 비밀번호가 올바르지 않습니다." });
+      }
+      passwords.set(actor.userId, body.newPassword);
+      identity = null;
+      return route.fulfill({ status: 204 });
+    }
     if (path === "/library/state") return reply(200, actor.role === "MEMBER" ? {
       ...data,
       users: [actor],

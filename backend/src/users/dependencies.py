@@ -1,3 +1,4 @@
+from hmac import compare_digest
 from enum import Enum
 from typing import Annotated
 
@@ -7,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenException, UnauthorizedException
-from src.core.security import decode_token
+from src.core.security import decode_token, password_session_tag
 from src.users.models import User
 
 ACCESS_COOKIE_NAME = "access_token"
@@ -75,6 +76,18 @@ def get_current_user(
         raise ForbiddenException(
             code="INACTIVE_USER",
             message="비활성화되었거나 탈퇴한 계정입니다.",
+        )
+
+    credential = payload.get("credential")
+    if (
+        not user.password_hash
+        or not isinstance(credential, str)
+        or not credential.isascii()
+        or not compare_digest(credential, password_session_tag(user.password_hash))
+    ):
+        raise UnauthorizedException(
+            code="SESSION_INVALIDATED",
+            message="세션이 종료되었습니다. 다시 로그인해 주세요.",
         )
 
     return user

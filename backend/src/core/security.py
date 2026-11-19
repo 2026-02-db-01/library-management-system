@@ -1,3 +1,4 @@
+import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -20,6 +21,15 @@ def hash_password(plain_password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """입력된 평문 비밀번호와 DB에 저장된 해시값(Argon2 및 Bcrypt)을 비교 검증합니다."""
     return password_hash.verify(plain_password, hashed_password)
+
+
+def password_session_tag(stored_hash: str) -> str:
+    """Bind access tokens to the stored credential without exposing the password hash."""
+    return hmac.new(
+        settings.SECRET_KEY.encode(),
+        b"chaekdam:password-session:" + stored_hash.encode(),
+        "sha256",
+    ).hexdigest()
 
 
 def create_access_token(subject: str | int, extra_claims: dict[str, Any] | None = None) -> str:

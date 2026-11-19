@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLibraryStore, type ActionResult } from "../store/libraryStore";
+import { ApiError } from "../api/client";
+import { changeOwnPassword } from "../api/http-auth";
 import { WorkspaceLayout } from "../components/layout/WorkspaceLayout";
 import {
   Button,
@@ -19,6 +21,75 @@ import type { CorrectionType, RecordStatus } from "../types/domain";
 
 function Result({ value }: { value: ActionResult | null }) {
   return value && <ResultMessage message={value.message} error={!value.ok} />;
+}
+
+function ChangePasswordForm() {
+  const navigate = useNavigate();
+  const setCurrentUser = useLibraryStore((state) => state.setCurrentUser);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [errorField, setErrorField] = useState<"current" | "confirm" | null>(null);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    const form = new FormData(event.currentTarget);
+    const currentPassword = String(form.get("currentPassword"));
+    const newPassword = String(form.get("newPassword"));
+
+    setErrorField(null);
+    setMessage("");
+    if (newPassword !== form.get("confirmPassword")) {
+      setErrorField("confirm");
+      setMessage("새 비밀번호와 확인 값이 일치하지 않습니다.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await changeOwnPassword({ currentPassword, newPassword });
+      await setCurrentUser(null);
+      navigate("/login", { replace: true, state: { passwordChanged: true } });
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        await setCurrentUser(null);
+        navigate("/login", { replace: true, state: { sessionEnded: true } });
+        return;
+      }
+      if (error instanceof ApiError && error.code === "CURRENT_PASSWORD_MISMATCH") {
+        setErrorField("current");
+      }
+      setMessage(error instanceof ApiError
+        ? error.message
+        : "변경 결과를 확인할 수 없습니다. 연결을 확인한 뒤 다시 로그인해 주세요.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <h2>비밀번호 변경</h2>
+      <p>변경하면 이 브라우저와 다른 기기의 로그인 세션이 종료됩니다.</p>
+      <form className="modal-form" aria-label="비밀번호 변경" onSubmit={submit}>
+        <Field label="현재 비밀번호">
+          <input type="password" name="currentPassword" autoComplete="current-password" required maxLength={128}
+            aria-invalid={errorField === "current"} aria-describedby={errorField === "current" ? "password-change-error" : undefined} />
+        </Field>
+        <Field label="새 비밀번호">
+          <input type="password" name="newPassword" autoComplete="new-password" required minLength={12} maxLength={128}
+            aria-describedby="new-password-hint" />
+        </Field>
+        <p id="new-password-hint">12~128자를 입력해 주세요.</p>
+        <Field label="새 비밀번호 확인">
+          <input type="password" name="confirmPassword" autoComplete="new-password" required maxLength={128}
+            aria-invalid={errorField === "confirm"} aria-describedby={errorField === "confirm" ? "password-change-error" : undefined} />
+        </Field>
+        <Button type="submit" disabled={busy}>{busy ? "변경 중…" : "비밀번호 변경"}</Button>
+        {message && <p id="password-change-error" role="alert">{message}</p>}
+      </form>
+    </Card>
+  );
 }
 
 export function AccountPage() {
@@ -46,7 +117,7 @@ export function AccountPage() {
     >
       <PageHeading
         title="내 계정"
-        description="본인 계정의 이름과 연락처를 관리합니다."
+        description="본인 계정의 이름, 연락처와 비밀번호를 관리합니다."
       />
       <Card>
         <p>
@@ -122,6 +193,7 @@ export function AccountPage() {
           </>
         )}
       </Card>
+      <ChangePasswordForm key={id} />
       {confirm && (
         <Modal
           title="회원 탈퇴 확인"

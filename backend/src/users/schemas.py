@@ -55,6 +55,11 @@ class LoginRequest(CamelModel):
         return trimmed
 
 
+class ChangePasswordRequest(CamelModel):
+    current_password: str = Field(min_length=1, max_length=128, repr=False)
+    new_password: str = Field(min_length=12, max_length=128, repr=False)
+
+
 class AuthenticatedUserResponse(CamelModel):
     user_id: int
     role: str

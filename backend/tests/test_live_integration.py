@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event, select
 
+from src.books.models import BookCopy, CopyStatusHistory
 from src.core.database import SessionLocal, get_db
 from src.main import app
 from src.loans.models import Loan, LoanCorrectionHistory, RequestRecord
@@ -259,3 +260,93 @@ def test_audit_constraint_failure_rolls_back_correction_and_withdrawal():
         assert loan.returned_at is not None and loan.member_user_id == user.user_id
         assert user.account_status == "ACTIVE" and user.contact == payload["contact"]
         assert db.scalar(select(LoanCorrectionHistory).where(LoanCorrectionHistory.loan_id == loan_id)) is None
+
+
+def test_undo_return_rejects_retired_copy_without_writing_history():
+    with client() as staff, client() as reader:
+        login(staff, "librarian1")
+        member = new_member(reader)
+        book_id = request(staff, "GET", "/books", 200)[0]["bookId"]
+        copy_id = request(staff, "POST", f"/books/{book_id}/copies", 201)["copyId"]
+        loan_id = request(staff, "POST", "/loans/checkout", 201, json={
+            "memberUserId": member["userId"], "copyId": copy_id,
+        })["loanId"]
+        request(staff, "POST", f"/loans/{loan_id}/return", 200, json={})
+        request(staff, "PATCH", f"/books/copies/{copy_id}/status", 200,
+                json={"status": "RETIRED", "reason": "QA permanent retirement"})
+
+        def snapshot():
+            with SessionLocal() as db:
+                loan = db.get(Loan, loan_id)
+                copy = db.get(BookCopy, copy_id)
+                history = list(db.scalars(
+                    select(CopyStatusHistory).where(CopyStatusHistory.copy_id == copy_id)
+                    .order_by(CopyStatusHistory.copy_status_history_id)
+                ))
+                return (
+                    (loan.member_user_id, loan.copy_id, loan.returned_at, loan.returned_by_user_id,
+                     loan.is_cancelled, loan.borrowed_at, loan.current_due_date),
+                    copy.management_status,
+                    [(row.copy_status_history_id, row.previous_status, row.new_status, row.reason,
+                      row.changed_by_user_id, row.changed_at, row.related_loan_id) for row in history],
+                )
+
+        before = snapshot()
+        assert before[0][2] is not None and before[0][3] is not None
+        assert before[1] == "RETIRED" and before[2][-1][2] == "RETIRED"
+
+        request_id = uuid4()
+        result = request(staff, "POST", f"/loans/{loan_id}/correct", 409, json={
+            "type": "UNDO_RETURN", "reason": "QA correction of retired copy", "physicalConfirmed": True,
+            "requestId": str(request_id),
+        })
+        assert result["code"] == "RETIRED_COPY"
+        assert snapshot() == before
+        with SessionLocal() as db:
+            assert db.get(RequestRecord, request_id) is None
+            assert db.scalar(select(LoanCorrectionHistory).where(LoanCorrectionHistory.loan_id == loan_id)) is None
+
+
+@pytest.mark.parametrize("role", ["MEMBER", "LIBRARIAN", "ADMIN"])
+def test_password_change_invalidates_only_own_sessions(role):
+    with client() as actor, client() as other_session, client() as admin:
+        account = identity()
+        login(admin, "admin")
+        if role == "MEMBER":
+            request(actor, "POST", "/auth/signup", 201, json=account)
+        else:
+            request(admin, "POST", "/users/staff", 201, json={**account, "role": role})
+        user_id = login(actor, account["loginId"], account["password"])["userId"]
+
+        try:
+            login(other_session, account["loginId"], account["password"])
+            new_password = uuid4().hex
+            invalid = request(actor, "POST", "/auth/change-password", 400, json={
+                "currentPassword": "intentionally incorrect", "newPassword": new_password,
+            })
+            assert invalid["code"] == "CURRENT_PASSWORD_MISMATCH"
+            assert request(actor, "GET", "/auth/me", 200)["userId"] == user_id
+            assert request(other_session, "GET", "/auth/me", 200)["userId"] == user_id
+            same = request(actor, "POST", "/auth/change-password", 422, json={
+                "currentPassword": account["password"], "newPassword": account["password"],
+            })
+            assert same["code"] == "PASSWORD_UNCHANGED"
+
+            response = actor.post("/auth/change-password", json={
+                "currentPassword": account["password"], "newPassword": new_password,
+            })
+            assert response.status_code == 204 and not response.content
+            assert "max-age=0" in response.headers["set-cookie"].lower()
+            assert "access_token" not in actor.cookies
+            request(actor, "GET", "/auth/me", 401)
+            assert request(other_session, "GET", "/auth/me", 401)["code"] == "SESSION_INVALIDATED"
+            assert request(admin, "GET", "/auth/me", 200)["role"] == "ADMIN"
+            request(actor, "POST", "/auth/login", 401,
+                    json={"loginId": account["loginId"], "password": account["password"]})
+            assert login(actor, account["loginId"], new_password)["role"] == role
+            with SessionLocal() as db:
+                assert db.get(User, user_id).password_hash.startswith("$argon2id$")
+        finally:
+            if role != "MEMBER":
+                request(admin, "PATCH", f"/users/staff/{user_id}/status", 200,
+                        json={"reason": "QA password change cleanup"})

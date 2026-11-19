@@ -5,6 +5,13 @@ import type {
 } from './auth-contract'
 import { ApiError, apiRequest } from './client'
 
+export function changeOwnPassword(input: { currentPassword: string; newPassword: string }): Promise<void> {
+  return apiRequest<void>('/api/v1/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
 export const httpAuthTransport: AuthTransport = {
   async signup(input: RegistrationInput): Promise<void> {
     await apiRequest<void>('/api/v1/auth/signup', {

@@ -3,11 +3,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.books.service import contains_patron_identity
-from src.core.exceptions import ConflictException, ForbiddenException, UnauthorizedException
+from src.core.exceptions import AppException, ConflictException, ForbiddenException, UnauthorizedException
 from src.core.security import hash_password, verify_password
 from src.loans.models import Loan, RequestRecord
 from src.users.models import StaffAccountHistory, User
 from src.users.schemas import (
+    ChangePasswordRequest,
     LibraryUserResponse,
     LoginRequest,
     ProfileUpdateRequest,
@@ -85,6 +86,39 @@ def authenticate_user(db: Session, payload: LoginRequest) -> User:
         )
 
     return user
+
+
+def change_own_password(db: Session, current_user: User, payload: ChangePasswordRequest) -> None:
+    authenticated_hash = current_user.password_hash
+    user = db.scalar(
+        select(User)
+        .where(User.user_id == current_user.user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if user is None or not user.is_active:
+        raise ForbiddenException(code="INACTIVE_USER", message="비활성화되었거나 탈퇴한 계정입니다.")
+    if not user.password_hash or user.password_hash != authenticated_hash:
+        raise UnauthorizedException(code="SESSION_INVALIDATED", message="세션이 종료되었습니다. 다시 로그인해 주세요.")
+
+    current_password = payload.current_password
+    stored_hash = user.password_hash
+    bcrypt_input_too_long = stored_hash.startswith(("$2a$", "$2b$", "$2y$")) and len(current_password.encode()) > 72
+    if bcrypt_input_too_long or not verify_password(current_password, stored_hash):
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="CURRENT_PASSWORD_MISMATCH",
+            message="현재 비밀번호가 올바르지 않습니다.",
+        )
+    if payload.new_password == current_password:
+        raise AppException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            code="PASSWORD_UNCHANGED",
+            message="현재 비밀번호와 다른 새 비밀번호를 입력해 주세요.",
+        )
+
+    user.password_hash = hash_password(payload.new_password)
+    db.commit()
 
 
 def update_own_profile(

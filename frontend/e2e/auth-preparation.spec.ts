@@ -49,3 +49,58 @@ test("legacy demo signup route is not exposed", async ({ page }) => {
   await page.goto("/signup/demo");
   await expect(page.getByRole("heading", { name: "회원가입 데모" })).toHaveCount(0);
 });
+
+test("account password change validates confirmation and requires the new password on re-login", async ({ page }) => {
+  await installApiFixture(page);
+  const oldPassword = "fixture-test-password";
+  const newPassword = "fixture-updated-password";
+  let changeRequests = 0;
+  await page.route("**/api/v1/auth/change-password", async route => {
+    changeRequests++;
+    expect(route.request().postDataJSON()).toEqual({
+      currentPassword: expect.any(String), newPassword,
+    });
+    await route.fallback();
+  });
+
+  async function submitLogin(value: string) {
+    await page.getByLabel("로그인 ID").fill("haneul.k");
+    await page.getByLabel("비밀번호", { exact: true }).fill(value);
+    await page.getByRole("button", { name: "로그인", exact: true }).click();
+  }
+
+  await page.goto("/login");
+  await submitLogin(oldPassword);
+  await expect(page).toHaveURL(/\/user\/books$/);
+  await page.goto("/account");
+
+  const form = page.getByRole("form", { name: "비밀번호 변경" });
+  const current = form.getByLabel("현재 비밀번호", { exact: true });
+  const confirmation = form.getByLabel("새 비밀번호 확인", { exact: true });
+  const submit = form.getByRole("button", { name: "비밀번호 변경" });
+  await current.fill("invalid-current");
+  await form.getByLabel("새 비밀번호", { exact: true }).fill(newPassword);
+  await confirmation.fill("different-confirmation");
+  await submit.click();
+  await expect(form.getByRole("alert")).toHaveText("새 비밀번호와 확인 값이 일치하지 않습니다.");
+  await expect(confirmation).toHaveAttribute("aria-invalid", "true");
+  expect(changeRequests).toBe(0);
+
+  await confirmation.fill(newPassword);
+  await submit.click();
+  await expect(form.getByRole("alert")).toHaveText("현재 비밀번호가 올바르지 않습니다.");
+  await expect(current).toHaveAttribute("aria-invalid", "true");
+  await expect(page).toHaveURL(/\/account$/);
+
+  await current.fill(oldPassword);
+  await submit.click();
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole("status")).toHaveText("비밀번호를 변경했습니다. 새 비밀번호로 다시 로그인해 주세요.");
+  expect(changeRequests).toBe(2);
+  await page.reload();
+  await expect(page).toHaveURL(/\/login$/);
+  await submitLogin(oldPassword);
+  await expect(page.getByRole("alert")).toHaveText("아이디 또는 비밀번호가 올바르지 않습니다.");
+  await submitLogin(newPassword);
+  await expect(page).toHaveURL(/\/user\/books$/);
+});

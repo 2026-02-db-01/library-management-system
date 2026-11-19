@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from src.core.config import settings
 from src.core.database import get_db
-from src.core.security import create_access_token
+from src.core.security import create_access_token, password_session_tag
 from src.users import service
 from src.users.dependencies import (
     ACCESS_COOKIE_NAME,
@@ -15,6 +15,7 @@ from src.users.dependencies import (
 )
 from src.users.schemas import (
     AuthenticatedUserResponse,
+    ChangePasswordRequest,
     LibraryUserResponse,
     LoginRequest,
     ProfileUpdateRequest,
@@ -44,9 +45,10 @@ def login(
     db: Annotated[Session, Depends(get_db)],
 ) -> AuthenticatedUserResponse:
     user = service.authenticate_user(db, payload)
+    assert user.password_hash is not None  # authenticate_user rejects missing credentials.
     access_token = create_access_token(
         subject=user.user_id,
-        extra_claims={"role": user.role},
+        extra_claims={"role": user.role, "credential": password_session_tag(user.password_hash)},
     )
 
     response.set_cookie(
@@ -70,6 +72,17 @@ def get_me(current_user: CurrentUser) -> AuthenticatedUserResponse:
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(response: Response) -> None:
     response.delete_cookie(key=ACCESS_COOKIE_NAME, path="/", secure=not settings.DEBUG, httponly=True, samesite="lax")
+
+
+@auth_router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+def change_password(
+    payload: ChangePasswordRequest,
+    current_user: CurrentUser,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    service.change_own_password(db, current_user, payload)
+    logout(response)
 
 
 @router.patch("/me", response_model=UserActionResponse)

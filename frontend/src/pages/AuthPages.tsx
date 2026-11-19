@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { httpAuthTransport } from "../api/http-auth";
 import { validateAuth, type AuthValues as Values } from "../api/auth-validation";
 import { Button, Card, PageHeading } from "../components/ui/Primitives";
@@ -182,6 +182,7 @@ export function AuthForm({ signup }: { signup: boolean }) {
 
 function AuthPage({ signup }: { signup: boolean }) {
   const [params] = useSearchParams();
+  const { state } = useLocation();
   return (
     <main className="signup-page">
       <PageHeading
@@ -195,6 +196,12 @@ function AuthPage({ signup }: { signup: boolean }) {
         }
       />
       <Card>
+        {!signup && state?.passwordChanged && (
+          <p role="status">비밀번호를 변경했습니다. 새 비밀번호로 다시 로그인해 주세요.</p>
+        )}
+        {!signup && state?.sessionEnded && (
+          <p role="status">세션이 종료되었습니다. 다시 로그인해 주세요.</p>
+        )}
         <AuthForm signup={signup} />
       </Card>
     </main>

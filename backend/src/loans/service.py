@@ -625,7 +625,13 @@ def correct_loan(
                 message="탈퇴 회원 또는 미반납 건은 반납 취소할 수 없습니다.",
             )
 
-        db.scalar(select(BookCopy).where(BookCopy.copy_id == loan.copy_id).with_for_update())
+        copy = db.scalar(select(BookCopy).where(BookCopy.copy_id == loan.copy_id).with_for_update())
+        if copy is not None and copy.management_status == "RETIRED":
+            raise ConflictException(
+                code="RETIRED_COPY",
+                message="제적된 소장본의 반납 기록은 복원할 수 없습니다.",
+            )
+
         subsequent_loan = db.scalar(
             select(Loan).where(
                 Loan.loan_id != loan.loan_id,
