@@ -174,11 +174,6 @@ export function AuthForm({ signup }: { signup: boolean }) {
           <Link to="/signup">계정이 없나요? 회원가입</Link>
         )}
       </p>
-      {!signup && (
-        <p className="mock-login-note">
-          사서(librarian) · 관리자(admin) 또는 가입한 회원 계정으로 로그인합니다.
-        </p>
-      )}
     </>
   );
 }
