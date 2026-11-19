@@ -22,7 +22,7 @@ import {
   ShieldCheck,
   UsersRound,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { DataTable } from "../../components/tables/DataTable";
 import { CatalogFilters } from "../../components/catalog/CatalogFilters";
@@ -63,6 +63,8 @@ function useAdminData() {
       authors: state.authors,
       bookAuthors: state.bookAuthors,
       copies: state.copies,
+      occupiedCopyIds: state.occupiedCopyIds,
+      loanStatistics: state.loanStatistics,
       loans: state.loans,
       renewals: state.renewals,
       role: state.currentUser?.role,
@@ -105,15 +107,12 @@ function getMonthlyLoanStats(loans: ReturnType<typeof useAdminData>["loans"]) {
 
 export function AdminDashboardPage() {
   const data = useAdminData();
-  const counts = deriveLoanCounts(data);
+  const counts = data.loanStatistics ?? deriveLoanCounts(data);
   const members = data.users.filter((user) => user.role === "MEMBER");
-  const activeLoans = data.loans.filter(
-    (loan) => !loan.isCancelled && loan.returnedAt === null,
-  );
   const bookCounts = data.books
     .map((book) => ({
       book,
-      count: data.loans.filter(
+      count: data.loanStatistics?.byBook[book.bookId] ?? data.loans.filter(
         (loan) =>
           !loan.isCancelled &&
           data.copies.some(
@@ -231,9 +230,9 @@ export function AdminDashboardPage() {
               </div>
             ))}
           </div>
-          {activeLoans.length > 0 && (
+          {counts.active > 0 && (
             <p className="admin-recent-footnote">
-              현재 {activeLoans.length}건이 미반납 상태입니다.
+              현재 {counts.active}건이 미반납 상태입니다.
             </p>
           )}
         </Card>
@@ -252,7 +251,8 @@ export function AdminBooksPage() {
   const saveBook = useLibraryStore((state) => state.saveBook);
   const addCopy = useLibraryStore((state) => state.addCopy);
   const toggleCopyStatus = useLibraryStore((state) => state.toggleCopyStatus);
-  const [query, setQuery] = useState("");
+  const [params] = useSearchParams();
+  const [query, setQuery] = useState(() => params.get("q") ?? "");
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [result, setResult] = useState<ActionResult | null>(null);
@@ -907,12 +907,12 @@ export function AdminAuthorsPage() {
 
 export function AdminStatisticsPage() {
   const data = useAdminData();
-  const counts = deriveLoanCounts(data);
-  const monthly = useMemo(() => getMonthlyLoanStats(data.loans), [data.loans]);
+  const counts = data.loanStatistics ?? deriveLoanCounts(data);
+  const monthly = data.loanStatistics?.monthly ?? getMonthlyLoanStats(data.loans);
   const byBook = data.books
     .map((book) => ({
       book: book.title,
-      loans: data.loans.filter(
+      loans: data.loanStatistics?.byBook[book.bookId] ?? data.loans.filter(
         (loan) =>
           data.copies.find((copy) => copy.copyId === loan.copyId)?.bookId ===
           book.bookId,
@@ -924,14 +924,14 @@ export function AdminStatisticsPage() {
     .filter((user) => user.role === "LIBRARIAN")
     .map((user) => ({
       user,
-      checkouts: data.loans.filter(
+      checkouts: data.loanStatistics?.byLibrarian[user.userId]?.checkouts ?? data.loans.filter(
         (loan) => loan.checkedOutByUserId === user.userId,
       ).length,
-      returns: data.loans.filter(
+      returns: data.loanStatistics?.byLibrarian[user.userId]?.returns ?? data.loans.filter(
         (loan) => loan.returnedByUserId === user.userId,
       ).length,
     }));
-  const overdueHistory = data.loans.filter(
+  const overdueHistory = data.loanStatistics?.overdueHistory ?? data.loans.filter(
     (loan) => loan.returnedAt !== null && getOverdueDays(loan) > 0,
   ).length;
 
@@ -947,7 +947,7 @@ export function AdminStatisticsPage() {
       <div className="metric-grid four">
         <MetricCard
           label="누적 대출"
-          value={data.loans.length}
+          value={data.loanStatistics?.total ?? data.loans.length}
           note="현재·과거 이력 포함"
           icon={<BookCopy size={17} />}
           tone="navy"

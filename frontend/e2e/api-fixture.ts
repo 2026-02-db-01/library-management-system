@@ -39,8 +39,8 @@ export async function installApiFixture(page: Page) {
     if (path === "/library/state") return reply(200, actor.role === "MEMBER" ? {
       ...data,
       users: [actor],
-      loans: data.loans.filter((loan) => loan.memberUserId === actor.userId || (!loan.isCancelled && !loan.returnedAt))
-        .map((loan) => loan.memberUserId === actor.userId ? loan : { ...loan, memberUserId: null }),
+      loans: data.loans.filter((loan) => loan.memberUserId === actor.userId),
+      occupiedCopyIds: data.loans.filter((loan) => !loan.isCancelled && !loan.returnedAt).map((loan) => loan.copyId),
     } : data);
     if (path === "/users/staff" && method === "POST") {
       if (actor.role !== "ADMIN") return error(403, "관리자 전용");

@@ -309,7 +309,7 @@ export function AccountsPage() {
               </Field>
             ))}
             <Field label="초기 비밀번호">
-              <input required type="password" autoComplete="new-password" maxLength={128}
+              <input required type="password" autoComplete="new-password" minLength={12} maxLength={128}
                 value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })} />
             </Field>
             <Field label="생성 역할">

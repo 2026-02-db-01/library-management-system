@@ -98,6 +98,8 @@ const ok = (message: string, loanId?: number): ActionResult => ({
 const fail = (message: string): ActionResult => ({ ok: false, message });
 
 const emptyData: LibraryData = {
+  occupiedCopyIds: undefined,
+  loanStatistics: null,
   users: [],
   books: [],
   authors: [],

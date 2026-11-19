@@ -44,6 +44,7 @@ export function UserBooksPage() {
       authors: state.authors,
       bookAuthors: state.bookAuthors,
       copies: state.copies,
+      occupiedCopyIds: state.occupiedCopyIds,
       loans: state.loans,
       renewals: state.renewals,
       staffHistory: state.staffHistory,
@@ -398,7 +399,7 @@ export function UserBooksPage() {
               </div>
               <div className="copy-status-list">
                 {selectedCopies.map((copy) => {
-                  const borrowed = data.loans.some(
+                  const borrowed = data.occupiedCopyIds?.includes(copy.copyId) ?? data.loans.some(
                     (loan) =>
                       loan.copyId === copy.copyId &&
                       !loan.isCancelled &&
