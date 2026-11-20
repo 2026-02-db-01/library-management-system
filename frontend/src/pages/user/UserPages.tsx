@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  AlertTriangle,
   BookMarked,
   CalendarDays,
   CalendarClock,
   Clock3,
   Search,
-  UserRound,
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -37,41 +35,6 @@ import {
 import { useLibraryStore, type ActionResult } from "../../store/libraryStore";
 import type { Book, Loan } from "../../types/domain";
 
-function DemoMemberPicker() {
-  const users = useLibraryStore((state) => state.users);
-  const demoMemberId = useLibraryStore((state) => state.demoMemberId);
-  const setDemoMember = useLibraryStore((state) => state.setDemoMember);
-  const members = users.filter(
-    (user) => user.role === "MEMBER" && user.accountStatus === "ACTIVE",
-  );
-
-  return (
-    <div className="demo-member-picker">
-      <span className="demo-member-icon">
-        <UserRound size={16} />
-      </span>
-      <div>
-        <strong>데모 회원 선택</strong>
-        <small>선택에 따라 대출 내역이 바뀝니다.</small>
-      </div>
-      <select
-        id="demo-member-select"
-        name="demoMemberId"
-        aria-label="데모 회원 선택"
-        value={demoMemberId}
-        onChange={(event) => setDemoMember(Number(event.target.value))}
-      >
-        {members.map((member) => (
-          <option key={member.userId} value={member.userId}>
-            {member.fullName} · ID {member.userId}
-            {member.accountStatus === "INACTIVE" ? " · 비활성" : ""}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
 export function UserBooksPage() {
   const [initialParams] = useSearchParams();
   const data = useLibraryStore(
@@ -81,6 +44,7 @@ export function UserBooksPage() {
       authors: state.authors,
       bookAuthors: state.bookAuthors,
       copies: state.copies,
+      occupiedCopyIds: state.occupiedCopyIds,
       loans: state.loans,
       renewals: state.renewals,
       staffHistory: state.staffHistory,
@@ -104,9 +68,6 @@ export function UserBooksPage() {
     "all" | "available" | "unavailable"
   >("all");
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
-  const recordDbFlowEvents = useLibraryStore(
-    (state) => state.recordDbFlowEvents,
-  );
   const normalized = query.trim().toLocaleLowerCase();
   let isbnError = "";
   if (searchBy === "isbn" && query.trim()) {
@@ -193,54 +154,6 @@ export function UserBooksPage() {
 
   function inspectBook(book: Book) {
     setSelectedBook(book);
-    recordDbFlowEvents([
-      {
-        operation: "SELECT",
-        tableId: "book",
-        columnIds: [
-          "book_id",
-          "isbn",
-          "title",
-          "publisher",
-          "publication_year",
-        ],
-        message: "검색 조건에 맞는 서지정보를 조회합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "book_author",
-        columnIds: ["book_id", "author_id"],
-        relationId: "book-book_author",
-        message: "도서 ID로 연결된 저자 식별자를 조회합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "author",
-        columnIds: ["author_id", "author_name"],
-        relationId: "author-book_author",
-        message: "연결된 저자의 이름을 조회합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "book_copy",
-        columnIds: ["copy_id", "copy_code", "management_status"],
-        relationId: "book-book_copy",
-        message: "도서 ID에 속한 실물 소장본과 관리 상태를 확인합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "loan",
-        columnIds: ["copy_id", "returned_at"],
-        relationId: "book_copy-loan",
-        message:
-          "각 소장본의 미반납 loan을 확인해 대출 가능 수량을 계산합니다. book에서 loan으로 직접 연결되는 FK는 없습니다.",
-        status: "success",
-      },
-    ]);
   }
 
   return (
@@ -250,7 +163,7 @@ export function UserBooksPage() {
         title="도서 검색"
         description="제목, 저자, ISBN으로 도서관 소장 도서를 찾고 실물 소장본의 이용 가능 여부를 확인합니다."
       />
-      <DemoMemberPicker />
+      
       {isbnError && <ResultMessage message={isbnError} error />}
       <div className="advanced-search">
         <label>
@@ -285,7 +198,7 @@ export function UserBooksPage() {
             }}
           >
             <option value="">전체 분류</option>
-            <option value="DEMO_GENERAL">일반 · 합성 데모 분류</option>
+            <option value="DEMO_GENERAL">일반</option>
           </select>
         </label>
         <label>
@@ -486,7 +399,7 @@ export function UserBooksPage() {
               </div>
               <div className="copy-status-list">
                 {selectedCopies.map((copy) => {
-                  const borrowed = data.loans.some(
+                  const borrowed = data.occupiedCopyIds?.includes(copy.copyId) ?? data.loans.some(
                     (loan) =>
                       loan.copyId === copy.copyId &&
                       !loan.isCancelled &&
@@ -527,9 +440,9 @@ export function UserBooksPage() {
 
 export function UserLoansPage() {
   const state = useLibraryStore();
-  const member = state.users.find((user) => user.userId === state.demoMemberId);
+  const member = state.users.find((user) => user.userId === state.currentUser?.userId);
   const memberLoans = state.loans.filter(
-    (loan) => loan.memberUserId === state.demoMemberId,
+    (loan) => loan.memberUserId === state.currentUser?.userId,
   );
   const current = memberLoans
     .filter((loan) => !loan.isCancelled && loan.returnedAt === null)
@@ -539,43 +452,7 @@ export function UserLoansPage() {
     .sort((a, b) => (b.returnedAt ?? "").localeCompare(a.returnedAt ?? ""));
   const [result, setResult] = useState<ActionResult | null>(null);
   const renewLoan = useLibraryStore((store) => store.renewLoan);
-  const recordDbFlowEvents = useLibraryStore(
-    (store) => store.recordDbFlowEvents,
-  );
 
-  useEffect(() => {
-    recordDbFlowEvents([
-      {
-        operation: "SELECT",
-        tableId: "app_user",
-        columnIds: ["user_id", "role", "account_status"],
-        message: "현재 데모 회원 계정을 확인합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "loan",
-        columnIds: [
-          "member_user_id",
-          "copy_id",
-          "borrowed_at",
-          "current_due_date",
-          "returned_at",
-        ],
-        relationId: "app_user-loan-member",
-        message: "회원 ID로 현재 대출과 과거 이력을 조회합니다.",
-        status: "success",
-      },
-      {
-        operation: "SELECT",
-        tableId: "loan_renewal",
-        columnIds: ["loan_id", "previous_due_date", "new_due_date"],
-        relationId: "loan-loan_renewal",
-        message: "대출 연장 이력을 연결해 남은 연장 가능 여부를 확인합니다.",
-        status: "success",
-      },
-    ]);
-  }, [recordDbFlowEvents, state.demoMemberId]);
 
   function titleFor(loan: Loan) {
     return getBookForCopy(loan.copyId, state)?.title ?? "도서 정보 없음";
@@ -592,9 +469,9 @@ export function UserLoansPage() {
       <PageHeading
         eyebrow="USER SERVICE · MY ACTIVITY"
         title="내 대출 현황"
-        description="선택한 데모 회원의 현재 대출과 과거 이용 기록을 확인합니다."
+        description="현재 로그인한 회원의 대출과 과거 이용 기록을 확인합니다."
       />
-      <DemoMemberPicker />
+      
       {member && (
         <div className="member-context-line">
           <span className="member-avatar">
@@ -635,7 +512,7 @@ export function UserLoansPage() {
                 canRenew(loan, state.renewals) &&
                 !state.loans.some(
                   (other) =>
-                    other.memberUserId === state.demoMemberId &&
+                    other.memberUserId === state.currentUser?.userId &&
                     isOverdue(other),
                 );
               return (
@@ -676,8 +553,8 @@ export function UserLoansPage() {
                       <Button
                         variant="secondary"
                         disabled={!eligible}
-                        onClick={() =>
-                          setResult(renewLoan(loan.loanId, state.demoMemberId))
+                        onClick={async () =>
+                          setResult(await renewLoan(loan.loanId, loan.memberUserId!))
                         }
                         icon={<CalendarClock size={14} />}
                       >
@@ -687,19 +564,7 @@ export function UserLoansPage() {
                             ? "연체로 연장 불가"
                             : "연장 완료"}
                       </Button>
-                      {eligible && (
-                        <Button
-                          variant="quiet"
-                          onClick={() =>
-                            setResult(
-                              renewLoan(loan.loanId, state.demoMemberId, true),
-                            )
-                          }
-                          icon={<AlertTriangle size={14} />}
-                        >
-                          오류 상황 시연
-                        </Button>
-                      )}
+
                     </div>
                   </div>
                 </Card>
@@ -772,8 +637,7 @@ export function UserLoansPage() {
       </div>
       <Notice tone="info" title="연장 처리 안내">
         본인 계정의 미반납·비연체 대출만 한 번, 현재 기한에서 7일 연장할 수
-        있습니다. 오류 시연은 `loan_renewal` 생성 실패를 가정해 변경 전 Mock
-        상태로 되돌립니다. 실제 PostgreSQL 롤백은 실행하지 않습니다.
+        있습니다.
       </Notice>
     </WorkspaceLayout>
   );

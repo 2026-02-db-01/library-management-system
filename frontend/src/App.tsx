@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import {
   BrowserRouter,
   HashRouter,
@@ -14,7 +14,6 @@ import type { UserRole } from "./types/domain";
 import "./App.css";
 import {
   AccountPage,
-  SignupPage as DemoSignupPage,
   AccountsPage,
   CopiesPage,
   CorrectionsPage,
@@ -127,33 +126,35 @@ function RoleRoute({
   role: UserRole;
   children: ReactNode;
 }) {
-  const selectedRole = useLibraryStore((state) => state.demoRole);
-  const roleSwitchTarget = useLibraryStore((state) => state.roleSwitchTarget);
+  const user = useLibraryStore((state) => state.currentUser);
   const location = useLocation();
-  const active = useLibraryStore((state) => {
-    const id =
-      role === "MEMBER"
-        ? state.demoMemberId
-        : role === "LIBRARIAN"
-          ? state.demoLibrarianId
-          : state.demoAdminId;
-    return state.users.some(
-      (user) =>
-        user.userId === id &&
-        user.role === role &&
-        user.accountStatus === "ACTIVE",
-    );
-  });
-  if (roleSwitchTarget && location.pathname !== roleSwitchTarget) return null;
-  if (selectedRole !== role || !active)
-    return <Navigate to="/" replace state={{ requiredRole: role }} />;
+  if (!user || user.accountStatus !== "ACTIVE") {
+    const next = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/login?next=${next}`} replace />;
+  }
+  if (user.role !== role) return <Navigate to="/" replace />;
   return children;
 }
 
 const SiteRouter = import.meta.env.VITE_GITHUB_PAGES === 'true' ? HashRouter : BrowserRouter;
 
 function App() {
-  const role = useLibraryStore((state) => state.demoRole);
+  const role = useLibraryStore((state) => state.currentUser?.role ?? null);
+  const isInitialized = useLibraryStore((state) => state.isInitialized);
+  const initialize = useLibraryStore((state) => state.initialize);
+
+  useEffect(() => {
+    void initialize();
+  }, [initialize]);
+
+  if (!isInitialized) {
+    return (
+      <div className="route-loading" role="status">
+        도서관 데이터를 불러오는 중…
+      </div>
+    );
+  }
+
   return (
     <SiteRouter>
       <Suspense
@@ -167,7 +168,6 @@ function App() {
           <Route path="/" element={<AppShell />}>
             <Route index element={<HomePage />} />
             <Route path="signup" element={<SignupPage />} />
-            <Route path="signup/demo" element={<DemoSignupPage />} />
             <Route path="login" element={<LoginPage />} />
             <Route
               path="account"
@@ -177,7 +177,7 @@ function App() {
                     <AccountPage key={role} />
                   </RoleRoute>
                 ) : (
-                  <Navigate to="/" replace />
+                  <Navigate to="/login?next=%2Faccount" replace />
                 )
               }
             />

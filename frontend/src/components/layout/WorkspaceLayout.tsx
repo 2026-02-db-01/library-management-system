@@ -1,7 +1,8 @@
 import { NavLink, useLocation } from "react-router-dom";
+import { useState } from "react";
+import { useLibraryStore } from "../../store/libraryStore";
 import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
-import { Badge } from "../ui/Primitives";
 
 export type WorkspaceKey = "user" | "librarian" | "admin" | "console";
 
@@ -79,6 +80,24 @@ export function WorkspaceLayout({
 }) {
   const config = workspaceConfig[section];
   const location = useLocation();
+  const currentUser = useLibraryStore((state) => state.currentUser);
+  const hasLoadedData = useLibraryStore((state) => state.hasLoadedData);
+  const dataError = useLibraryStore((state) => state.dataError);
+  const syncState = useLibraryStore((state) => state.syncState);
+  const [retrying, setRetrying] = useState(false);
+  const showUnavailable = currentUser !== null && !!dataError;
+
+  async function retryLoad() {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await syncState();
+    } catch {
+      // The store exposes the failure in dataError; keep the retry view visible.
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   return (
     <div className={`workspace-shell workspace-${section}`}>
@@ -103,13 +122,22 @@ export function WorkspaceLayout({
             </NavLink>
           ))}
         </nav>
-        <div className="sidebar-footer">
-          <Badge tone="blue">DEMO DATA</Badge>
-          <p>화면의 변경은 브라우저 내 데모 상태에만 반영됩니다.</p>
-        </div>
       </aside>
       <main className="workspace-content" key={location.pathname}>
-        {children}
+        {showUnavailable ? (
+          <section role="alert" aria-label="업무 데이터 조회 실패">
+            <h1>업무 데이터를 불러오지 못했습니다.</h1>
+            <p>현재 회원·도서·대출 현황을 확인할 수 없습니다.</p>
+            <p>{dataError}</p>
+            <button type="button" onClick={retryLoad} disabled={retrying}>
+              {retrying ? "재시도 중…" : "다시 시도"}
+            </button>
+          </section>
+        ) : currentUser && !hasLoadedData ? (
+          <p role="status">업무 데이터를 불러오는 중…</p>
+        ) : (
+          children
+        )}
       </main>
     </div>
   );

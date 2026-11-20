@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLibraryStore, type ActionResult } from "../store/libraryStore";
+import { ApiError } from "../api/client";
+import { changeOwnPassword } from "../api/http-auth";
 import { WorkspaceLayout } from "../components/layout/WorkspaceLayout";
 import {
   Button,
@@ -20,33 +22,102 @@ import type { CorrectionType, RecordStatus } from "../types/domain";
 function Result({ value }: { value: ActionResult | null }) {
   return value && <ResultMessage message={value.message} error={!value.ok} />;
 }
+
+function ChangePasswordForm() {
+  const navigate = useNavigate();
+  const setCurrentUser = useLibraryStore((state) => state.setCurrentUser);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [errorField, setErrorField] = useState<"current" | "confirm" | null>(null);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    const form = new FormData(event.currentTarget);
+    const currentPassword = String(form.get("currentPassword"));
+    const newPassword = String(form.get("newPassword"));
+
+    setErrorField(null);
+    setMessage("");
+    if (newPassword !== form.get("confirmPassword")) {
+      setErrorField("confirm");
+      setMessage("새 비밀번호와 확인 값이 일치하지 않습니다.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await changeOwnPassword({ currentPassword, newPassword });
+      await setCurrentUser(null);
+      navigate("/login", { replace: true, state: { passwordChanged: true } });
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        await setCurrentUser(null);
+        navigate("/login", { replace: true, state: { sessionEnded: true } });
+        return;
+      }
+      if (error instanceof ApiError && error.code === "CURRENT_PASSWORD_MISMATCH") {
+        setErrorField("current");
+      }
+      setMessage(error instanceof ApiError
+        ? error.message
+        : "변경 결과를 확인할 수 없습니다. 연결을 확인한 뒤 다시 로그인해 주세요.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <h2>비밀번호 변경</h2>
+      <p>변경하면 이 브라우저와 다른 기기의 로그인 세션이 종료됩니다.</p>
+      <form className="modal-form" aria-label="비밀번호 변경" onSubmit={submit}>
+        <Field label="현재 비밀번호">
+          <input type="password" name="currentPassword" autoComplete="current-password" required maxLength={128}
+            aria-invalid={errorField === "current"} aria-describedby={errorField === "current" ? "password-change-error" : undefined} />
+        </Field>
+        <Field label="새 비밀번호">
+          <input type="password" name="newPassword" autoComplete="new-password" required minLength={12} maxLength={128}
+            aria-describedby="new-password-hint" />
+        </Field>
+        <p id="new-password-hint">12~128자를 입력해 주세요.</p>
+        <Field label="새 비밀번호 확인">
+          <input type="password" name="confirmPassword" autoComplete="new-password" required maxLength={128}
+            aria-invalid={errorField === "confirm"} aria-describedby={errorField === "confirm" ? "password-change-error" : undefined} />
+        </Field>
+        <Button type="submit" disabled={busy}>{busy ? "변경 중…" : "비밀번호 변경"}</Button>
+        {message && <p id="password-change-error" role="alert">{message}</p>}
+      </form>
+    </Card>
+  );
+}
+
 export function AccountPage() {
   const s = useLibraryStore(),
     navigate = useNavigate(),
     id =
-      s.demoRole === "MEMBER"
-        ? s.demoMemberId
-        : s.demoRole === "LIBRARIAN"
-          ? s.demoLibrarianId
-          : s.demoAdminId;
-  const user = s.users.find((u) => u.userId === id),
-    [name, setName] = useState(user?.fullName ?? ""),
-    [phone, setPhone] = useState(user?.contact ?? ""),
+      s.currentUser?.userId;
+  const suspension = s.users.find((item) => item.userId === id)?.borrowingSuspendedUntil;
+  const user = s.currentUser,
+    [name, setName] = useState<string | null>(null),
+    [phone, setPhone] = useState<string | null>(null),
+    [busy, setBusy] = useState(false),
     [result, setResult] = useState<ActionResult | null>(null),
     [confirm, setConfirm] = useState(false);
+
   return (
     <WorkspaceLayout
       section={
-        s.demoRole === "MEMBER"
+        s.currentUser?.role === "MEMBER"
           ? "user"
-          : s.demoRole === "LIBRARIAN"
+          : s.currentUser?.role === "LIBRARIAN"
             ? "librarian"
             : "admin"
       }
     >
       <PageHeading
         title="내 계정"
-        description="본인 정보만 수정합니다. 비밀번호와 인증 서버는 연결되지 않은 데모입니다."
+        description="본인 계정의 이름, 연락처와 비밀번호를 관리합니다."
       />
       <Card>
         <p>
@@ -54,14 +125,25 @@ export function AccountPage() {
         </p>
         <form
           className="modal-form"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            setResult(s.updateProfile(id, { fullName: name, contact: phone }));
+            if (busy) return;
+            setBusy(true);
+            try {
+              const r = await s.updateProfile({
+                fullName: name ?? user?.fullName ?? "",
+                contact: phone ?? user?.contact ?? "",
+              });
+              setResult(r);
+              if (r.ok && !s.dataError) { setName(null); setPhone(null); }
+            } finally {
+              setBusy(false);
+            }
           }}
         >
           <Field label="이름">
             <input
-              value={name}
+              value={name ?? user?.fullName ?? ""}
               onChange={(e) => setName(e.target.value)}
               required
               maxLength={100}
@@ -69,20 +151,21 @@ export function AccountPage() {
           </Field>
           <Field label="연락처">
             <input
-              value={phone}
+              value={phone ?? user?.contact ?? ""}
               onChange={(e) => setPhone(e.target.value)}
               required
               inputMode="tel"
             />
           </Field>
-          <Button type="submit">본인 정보 저장</Button>
+          <Button type="submit" disabled={busy}>
+            {busy ? "저장 중…" : "본인 정보 저장"}
+          </Button>
         </form>
         <Result value={result} />
-        <Notice tone="info" title="인증 정책 미확정">
-          비밀번호 변경과 직원 최초 비밀번호 설정은 실제 인증 연결 시
-          제공합니다. 현재 역할 선택은 Mock 데모입니다.
+        <Notice tone="info" title="인증 정책 안내">
+          현재 로그인한 본인의 이름과 연락처만 수정할 수 있습니다.
         </Notice>
-        {s.demoRole === "MEMBER" && (
+        {s.currentUser?.role === "MEMBER" && (
           <>
             <p>
               현재 대출{" "}
@@ -94,16 +177,23 @@ export function AccountPage() {
             </p>
             <p>
               신규 대출 정지 종료 ·{" "}
-              {user?.borrowingSuspendedUntil
-                ? new Date(user.borrowingSuspendedUntil).toLocaleString("ko-KR")
+              {suspension
+                ? new Date(suspension).toLocaleString("ko-KR")
                 : "없음"}
             </p>
-            <Button variant="danger" onClick={() => setConfirm(true)}>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setResult(null);
+                setConfirm(true);
+              }}
+            >
               회원 탈퇴
             </Button>
           </>
         )}
       </Card>
+      <ChangePasswordForm key={id} />
       {confirm && (
         <Modal
           title="회원 탈퇴 확인"
@@ -111,8 +201,8 @@ export function AccountPage() {
           onClose={() => setConfirm(false)}
         >
           <p>
-            미반납 도서가 있으면 탈퇴할 수 없습니다. 탈퇴 후 ID 재사용 정책이
-            확정되지 않아 이 데모의 재가입은 제한됩니다.
+            미반납 도서가 있으면 탈퇴할 수 없습니다. 탈퇴 후에는 로그아웃되며
+            기존 계정으로 재로그인할 수 없습니다.
           </p>
           <ModalFooter>
             <Button variant="secondary" onClick={() => setConfirm(false)}>
@@ -120,14 +210,21 @@ export function AccountPage() {
             </Button>
             <Button
               variant="danger"
-              onClick={() => {
-                const r = s.withdrawMember(id);
-                setResult(r);
-                if (r.ok) navigate("/");
-                else setConfirm(false);
+              disabled={busy}
+              onClick={async () => {
+                if (busy) return;
+                setBusy(true);
+                try {
+                  const r = await s.withdrawMember();
+                  setResult(r);
+                  if (r.ok) navigate("/");
+                  else setConfirm(false);
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
-              탈퇴 확정
+              {busy ? "처리 중…" : "탈퇴 확정"}
             </Button>
           </ModalFooter>
         </Modal>
@@ -135,44 +232,12 @@ export function AccountPage() {
     </WorkspaceLayout>
   );
 }
-export function SignupPage() {
-  const s = useLibraryStore(),
-    [v, setV] = useState({ loginId: "", fullName: "", contact: "" }),
-    [result, setResult] = useState<ActionResult | null>(null);
-  return (
-    <main className="signup-page">
-      <PageHeading
-        title="회원가입 데모"
-        description="관리자 승인 없이 일반 회원으로 가입합니다. 실제 인증 계정은 생성하지 않습니다."
-      />
-      <Card>
-        <form
-          className="modal-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setResult(s.addMember(v));
-          }}
-        >
-          {(["loginId", "fullName", "contact"] as const).map((key, i) => (
-            <Field key={key} label={["로그인 ID", "이름", "연락처"][i]}>
-              <input
-                required
-                value={v[key]}
-                onChange={(e) => setV({ ...v, [key]: e.target.value })}
-              />
-            </Field>
-          ))}
-          <Button type="submit">일반 회원 가입</Button>
-        </form>
-        <Result value={result} />
-        <a href="/">홈으로</a>
-      </Card>
-    </main>
-  );
-}
+
 export function AccountsPage() {
   const s = useLibraryStore(),
     [query, setQuery] = useState(""),
+    [includeMembers, setIncludeMembers] = useState(false),
+    [busy, setBusy] = useState(false),
     [result, setResult] = useState<ActionResult | null>(null),
     [create, setCreate] = useState(false),
     [target, setTarget] = useState<number | null>(null),
@@ -181,32 +246,79 @@ export function AccountsPage() {
       loginId: "",
       fullName: "",
       contact: "",
+      password: "",
       role: "LIBRARIAN" as "LIBRARIAN" | "ADMIN",
     });
-  const rows = s.users.filter((u) =>
-    `${u.userId} ${u.role} ${u.accountStatus}`.includes(query),
-  );
-  function submit(e: FormEvent) {
+
+  const rows = s.users.filter((u) => {
+    if (!includeMembers && u.role === "MEMBER") return false;
+    return `${u.userId} ${u.fullName ?? ""} ${u.loginId ?? ""} ${u.role} ${u.accountStatus}`
+      .toLowerCase()
+      .includes(query.trim().toLowerCase());
+  });
+
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    const r = s.addStaff(v);
-    setResult(r);
-    if (r.ok) setCreate(false);
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await s.addStaff(v);
+      setResult(r);
+      if (r.ok) {
+        setCreate(false);
+        setV({
+          loginId: "",
+          fullName: "",
+          contact: "",
+          password: "",
+          role: "LIBRARIAN",
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
   }
+
   return (
     <WorkspaceLayout section="admin">
       <PageHeading
         title="계정 현황"
-        description="회원은 상태만 조회하고, 직원 계정은 생성·비활성화·재활성화합니다. 역할은 생성 후 변경할 수 없습니다."
+        description="기본적으로 직원 계정을 관리하며, 필요 시 일반 회원 상태도 함께 조회합니다. 역할은 생성 후 변경할 수 없습니다."
         actions={
-          <Button onClick={() => setCreate(true)}>직원 계정 생성</Button>
+          <Button
+            onClick={() => {
+              setResult(null);
+              setCreate(true);
+            }}
+          >
+            직원 계정 생성
+          </Button>
         }
       />
-      <SearchField
-        value={query}
-        onChange={setQuery}
-        label="계정 필터"
-        placeholder="ID, 역할, 상태 검색"
-      />
+      <div className="book-management-toolbar">
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          label="계정 필터"
+          placeholder="이름, 로그인 ID, 내부 ID, 역할, 상태 검색"
+        />
+        <label
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            fontSize: "0.9rem",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={includeMembers}
+            onChange={(e) => setIncludeMembers(e.target.checked)}
+          />
+          일반 회원(MEMBER) 상태도 함께 보기
+        </label>
+      </div>
       <Result value={result} />
       <Card className="table-card">
         <DataTable
@@ -216,20 +328,31 @@ export function AccountsPage() {
             {
               key: "id",
               title: "내부 ID",
-              render: (u) => <code>{u.userId}</code>,
+              render: (u) => <code>#{u.userId}</code>,
+            },
+            {
+              key: "identity",
+              title: "이름 · 로그인 ID",
+              render: (u) => (
+                <span className="table-title-cell">
+                  <strong>{u.fullName ?? "이름 없음"}</strong>
+                  <small>{u.loginId ?? "—"}</small>
+                </span>
+              ),
             },
             { key: "role", title: "역할", render: (u) => u.role },
             { key: "status", title: "상태", render: (u) => u.accountStatus },
             {
               key: "action",
-              title: "직원 상태",
+              title: "계정 관리",
               render: (u) =>
                 u.role === "MEMBER" ? (
-                  "본인 가입·탈퇴"
+                  "회원 직접 관리 (가입·탈퇴)"
                 ) : (
                   <Button
                     variant="secondary"
                     onClick={() => {
+                      setResult(null);
                       setTarget(u.userId);
                       setReason("");
                     }}
@@ -246,7 +369,7 @@ export function AccountsPage() {
         이용 내역은 제공하지 않습니다.
       </Notice>
       {create && (
-        <Modal title="직원 계정 생성" onClose={() => setCreate(false)}>
+        <Modal title="직원 계정 생성" onClose={() => { setCreate(false); setV({ ...v, password: "" }); }}>
           <form className="modal-form" onSubmit={submit}>
             {(["loginId", "fullName", "contact"] as const).map((key, i) => (
               <Field key={key} label={["로그인 ID", "이름", "연락처"][i]}>
@@ -257,6 +380,10 @@ export function AccountsPage() {
                 />
               </Field>
             ))}
+            <Field label="초기 비밀번호">
+              <input required type="password" autoComplete="new-password" minLength={12} maxLength={128}
+                value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })} />
+            </Field>
             <Field label="생성 역할">
               <select
                 value={v.role}
@@ -270,7 +397,9 @@ export function AccountsPage() {
             </Field>
             <Result value={result} />
             <ModalFooter>
-              <Button type="submit">직원 생성</Button>
+              <Button type="submit" disabled={busy}>
+                {busy ? "생성 중…" : "직원 생성"}
+              </Button>
             </ModalFooter>
           </form>
         </Modal>
@@ -283,13 +412,20 @@ export function AccountsPage() {
           <Result value={result} />
           <ModalFooter>
             <Button
-              onClick={() => {
-                const r = s.setUserStatus(target, reason);
-                setResult(r);
-                if (r.ok) setTarget(null);
+              disabled={busy}
+              onClick={async () => {
+                if (target === null || busy) return;
+                setBusy(true);
+                try {
+                  const r = await s.setUserStatus(target, reason);
+                  setResult(r);
+                  if (r.ok) setTarget(null);
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
-              상태 변경 확정
+              {busy ? "변경 중…" : "상태 변경 확정"}
             </Button>
           </ModalFooter>
         </Modal>
@@ -297,13 +433,14 @@ export function AccountsPage() {
     </WorkspaceLayout>
   );
 }
+
 export function CopiesPage() {
   const s = useLibraryStore(),
     [query, setQuery] = useState(""),
     [target, setTarget] = useState<number | null>(null),
     [status, setStatus] = useState<RecordStatus>("DAMAGED"),
     [reason, setReason] = useState(""),
-    [failure, setFailure] = useState(false),
+    [busy, setBusy] = useState(false),
     [result, setResult] = useState<ActionResult | null>(null);
   return (
     <WorkspaceLayout section="librarian">
@@ -320,7 +457,9 @@ export function CopiesPage() {
       <Result value={result} />
       <Card className="table-card">
         <DataTable
-          rows={s.copies.filter((c) => c.copyCode.includes(query))}
+          rows={s.copies.filter((c) =>
+            c.copyCode.toLowerCase().includes(query.trim().toLowerCase()),
+          )}
           getRowKey={(c) => c.copyId}
           columns={[
             {
@@ -354,6 +493,7 @@ export function CopiesPage() {
                   variant="secondary"
                   disabled={c.managementStatus === "RETIRED"}
                   onClick={() => {
+                    setResult(null);
                     setTarget(c.copyId);
                     setReason("");
                   }}
@@ -380,24 +520,27 @@ export function CopiesPage() {
           <Field label="사유">
             <input value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
-          <label>
-            <input
-              type="checkbox"
-              checked={failure}
-              onChange={(e) => setFailure(e.target.checked)}
-            />{" "}
-            이력 저장 실패 시연
-          </label>
           <Result value={result} />
           <ModalFooter>
             <Button
-              onClick={() => {
-                const r = s.changeCopyStatus(target, status, reason, failure);
-                setResult(r);
-                if (r.ok) setTarget(null);
+              disabled={busy}
+              onClick={async () => {
+                if (target === null || busy) return;
+                setBusy(true);
+                try {
+                  const r = await s.changeCopyStatus(
+                    target,
+                    status,
+                    reason,
+                  );
+                  setResult(r);
+                  if (r.ok) setTarget(null);
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
-              변경 확정
+              {busy ? "변경 중…" : "변경 확정"}
             </Button>
           </ModalFooter>
         </Modal>
@@ -405,14 +548,20 @@ export function CopiesPage() {
     </WorkspaceLayout>
   );
 }
+
 export function CorrectionsPage() {
   const s = useLibraryStore(),
-    [id, setId] = useState(s.loans[0]?.loanId ?? 0),
+    [id, setId] = useState(0),
     [type, setType] = useState<CorrectionType>("CANCEL_LOAN"),
     [reason, setReason] = useState(""),
     [physical, setPhysical] = useState(false),
-    [result, setResult] = useState<ActionResult | null>(null),
-    [failure, setFailure] = useState(false);
+    [busy, setBusy] = useState(false),
+    [result, setResult] = useState<ActionResult | null>(null);
+
+  const activeLoanId = s.loans.some((l) => l.loanId === id)
+    ? id
+    : (s.loans[0]?.loanId ?? 0);
+
   return (
     <WorkspaceLayout section="librarian">
       <PageHeading
@@ -422,19 +571,26 @@ export function CorrectionsPage() {
       <Card>
         <form
           className="modal-form"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            setResult(
-              s.correctLoan(
-                id,
+            if (busy) return;
+            setBusy(true);
+            try {
+              const r = await s.correctLoan(
+                activeLoanId,
                 { type, reason, physicalConfirmed: physical },
-                { simulateFailure: failure },
-              ),
-            );
+              );
+              setResult(r);
+            } finally {
+              setBusy(false);
+            }
           }}
         >
           <Field label="대출 기록">
-            <select value={id} onChange={(e) => setId(Number(e.target.value))}>
+            <select
+              value={activeLoanId}
+              onChange={(e) => setId(Number(e.target.value))}
+            >
               {s.loans.map((l) => (
                 <option key={l.loanId} value={l.loanId}>
                   #{l.loanId} ·{" "}
@@ -474,15 +630,9 @@ export function CorrectionsPage() {
             />{" "}
             실물 회수 또는 실제 미반출을 확인했습니다.
           </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={failure}
-              onChange={(e) => setFailure(e.target.checked)}
-            />{" "}
-            이력 저장 실패 · 전체 롤백 시연
-          </label>
-          <Button type="submit">정정 확정</Button>
+          <Button type="submit" disabled={busy}>
+            {busy ? "정정 중…" : "정정 확정"}
+          </Button>
         </form>
         <Result value={result} />
       </Card>
@@ -493,43 +643,55 @@ export function CorrectionsPage() {
     </WorkspaceLayout>
   );
 }
+
 export function HistoryPage() {
   const s = useLibraryStore(),
-    admin = s.demoRole === "ADMIN",
+    admin = s.currentUser?.role === "ADMIN",
     [query, setQuery] = useState("");
   const rows = admin
-    ? s.staffHistory.map((r) => ({
-        id: `staff-${r.staffHistoryId}`,
-        kind: r.actionType,
-        target: String(r.targetStaffUserId),
-        time: r.processedAt,
-        before: r.previousStatus ?? "없음",
-        after: r.newStatus,
-      }))
+    ? s.staffHistory.map((r) => {
+        const targetUser = s.users.find(
+          (u) => u.userId === r.targetStaffUserId,
+        );
+        return {
+          id: `staff-${r.staffHistoryId}`,
+          kind: r.actionType,
+          target: targetUser?.fullName
+            ? `#${r.targetStaffUserId} (${targetUser.fullName})`
+            : `#${r.targetStaffUserId}`,
+          time: r.processedAt,
+          before: r.previousStatus ?? "없음",
+          after: r.newStatus,
+          reason: r.reason || "—",
+        };
+      })
     : [
         ...s.bookHistory.map((r) => ({
           id: `book-${r.bookChangeId}`,
           kind: "서지 변경",
-          target: String(r.bookId),
+          target: `#${r.bookId}`,
           time: r.changedAt,
           before: JSON.stringify(r.beforeValues),
           after: JSON.stringify(r.afterValues),
+          reason: "—",
         })),
         ...s.copyHistory.map((r) => ({
           id: `copy-${r.copyStatusHistoryId}`,
           kind: "소장본 변경",
-          target: String(r.copyId),
+          target: `#${r.copyId}`,
           time: r.changedAt,
           before: r.previousStatus ?? "없음",
           after: r.newStatus,
+          reason: r.reason || "—",
         })),
         ...s.corrections.map((r) => ({
           id: `correction-${r.correctionId}`,
           kind: r.correctionType,
-          target: String(r.loanId),
+          target: `#${r.loanId}`,
           time: r.correctedAt,
           before: JSON.stringify(r.beforeValues),
           after: JSON.stringify(r.afterValues),
+          reason: r.reason || "—",
         })),
       ];
   return (
@@ -546,17 +708,21 @@ export function HistoryPage() {
         value={query}
         onChange={setQuery}
         label="이력 검색"
-        placeholder="유형 또는 대상 ID"
+        placeholder="유형, 대상 ID 또는 사유"
       />
       <Card className="table-card">
         <DataTable
           rows={rows
-            .filter((r) => `${r.kind} ${r.target}`.includes(query))
+            .filter((r) =>
+              `${r.kind} ${r.target} ${r.reason}`
+                .toLowerCase()
+                .includes(query.trim().toLowerCase()),
+            )
             .sort((a, b) => b.time.localeCompare(a.time))}
           getRowKey={(r) => r.id}
           columns={[
             { key: "type", title: "업무", render: (r) => r.kind },
-            { key: "target", title: "대상 ID", render: (r) => r.target },
+            { key: "target", title: "대상", render: (r) => r.target },
             { key: "time", title: "처리일", render: (r) => formatDate(r.time) },
             {
               key: "before",
@@ -567,6 +733,11 @@ export function HistoryPage() {
               key: "after",
               title: "변경 후",
               render: (r) => <code className="snapshot-cell">{r.after}</code>,
+            },
+            {
+              key: "reason",
+              title: "사유",
+              render: (r) => r.reason,
             },
           ]}
         />

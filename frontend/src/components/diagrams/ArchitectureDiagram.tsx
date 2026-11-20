@@ -9,15 +9,12 @@ import {
   UsersRound,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { useLibraryStore } from "../../store/libraryStore";
 
 export function ArchitectureDiagram() {
   const [backendOpen, setBackendOpen] = useState(false);
   const navigate = useNavigate();
-  const requestRoleSwitch = useLibraryStore((state) => state.requestRoleSwitch);
 
-  function enterRole(role: "MEMBER" | "LIBRARIAN" | "ADMIN", path: string) {
-    requestRoleSwitch(role, path);
+  function enterRole(_role: "MEMBER" | "LIBRARIAN" | "ADMIN", path: string) {
     navigate(path);
   }
 
@@ -149,7 +146,7 @@ export function ArchitectureDiagram() {
           </div>
           <p>
             FastAPI는 예정 구성으로 표시했습니다. 이 프로토타입은 브라우저의
-            Mock Store만 사용하며 서버 요청을 보내지 않습니다.
+            시스템 구성과 역할별 업무를 설명합니다.
           </p>
         </div>
       )}

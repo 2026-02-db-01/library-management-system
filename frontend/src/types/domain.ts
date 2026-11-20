@@ -85,7 +85,20 @@ export interface LoanRenewal {
   newDueDate: string;
 }
 
+export interface LoanStatistics {
+  total: number;
+  active: number;
+  overdue: number;
+  returned: number;
+  overdueHistory: number;
+  byBook: Record<number, number>;
+  byLibrarian: Record<number, { checkouts: number; returns: number }>;
+  monthly: { month: string; loans: number; returns: number }[];
+}
+
 export interface LibraryData {
+  occupiedCopyIds?: number[];
+  loanStatistics?: LoanStatistics | null;
   users: LibraryUser[];
   books: Book[];
   authors: Author[];

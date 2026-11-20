@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:live": "node scripts/run-live-e2e.mjs",
     "schema:generate": "node scripts/generate-schema.mjs"
   },
   "dependencies": {

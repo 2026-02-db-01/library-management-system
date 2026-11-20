@@ -1,4 +1,4 @@
-import { addDays, getKoreanDate } from "../data/mock/seed";
+import { addDays, getKoreanDate } from "./korean-date";
 import type {
   Author,
   Book,
@@ -40,11 +40,11 @@ export function getBookForCopy(
 
 export function getAvailability(
   bookId: number,
-  data: Pick<LibraryData, "copies" | "loans">,
+  data: Pick<LibraryData, "copies" | "loans" | "occupiedCopyIds">,
 ): BookAvailability {
   const copies = data.copies.filter((copy) => copy.bookId === bookId);
   const activeCopyIds = new Set(
-    data.loans.filter(isActiveLoan).map((loan) => loan.copyId),
+    data.occupiedCopyIds ?? data.loans.filter(isActiveLoan).map((loan) => loan.copyId),
   );
   const active = copies.filter((copy) => copy.managementStatus === "ACTIVE");
   const available = active.filter(
@@ -97,10 +97,10 @@ export function canRenew(
 
 export function getAvailableCopies(
   bookId: number,
-  data: Pick<LibraryData, "copies" | "loans">,
+  data: Pick<LibraryData, "copies" | "loans" | "occupiedCopyIds">,
 ): BookCopy[] {
   const activeCopyIds = new Set(
-    data.loans.filter(isActiveLoan).map((loan) => loan.copyId),
+    data.occupiedCopyIds ?? data.loans.filter(isActiveLoan).map((loan) => loan.copyId),
   );
   return data.copies.filter(
     (copy) =>

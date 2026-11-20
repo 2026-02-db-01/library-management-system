@@ -28,17 +28,9 @@ import { LibraryNav } from "./LibraryNav";
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const resetDemo = useLibraryStore((state) => state.resetDemo);
-  const demoRole = useLibraryStore((state) => state.demoRole);
-  const users = useLibraryStore((state) => state.users);
-  const demoAdminId = useLibraryStore((state) => state.demoAdminId);
-  const demoLibrarianId = useLibraryStore((state) => state.demoLibrarianId);
-  const setDemoAdmin = useLibraryStore((state) => state.setDemoAdmin);
-  const setDemoLibrarian = useLibraryStore((state) => state.setDemoLibrarian);
-  const completeRoleSwitch = useLibraryStore(
-    (state) => state.completeRoleSwitch,
-  );
-  const roleSwitchTarget = useLibraryStore((state) => state.roleSwitchTarget);
+  const syncState = useLibraryStore((state) => state.syncState);
+  const role = useLibraryStore((state) => state.currentUser?.role ?? null);
+  const dataError = useLibraryStore((state) => state.dataError);
   const events = useLibraryStore((state) => state.dbFlowEvents);
   const [notice, setNotice] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -65,11 +57,6 @@ export function AppShell() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-
-  useEffect(() => {
-    if (!roleSwitchTarget || location.pathname !== roleSwitchTarget) return;
-    completeRoleSwitch();
-  }, [completeRoleSwitch, location.pathname, roleSwitchTarget]);
 
   useEffect(() => {
     return useLibraryStore.subscribe((state, previous) => {
@@ -120,17 +107,27 @@ export function AppShell() {
     prefersReducedMotion,
   ]);
 
-  function handleReset() {
-    resetDemo();
+  async function handleReset() {
+    try {
+      await syncState();
+    } catch {
+      return;
+    }
+    if (role && !useLibraryStore.getState().currentUser) return;
     setFlowOpen(false);
     setMobileFlowTab("work");
-    navigate("/");
-    setNotice("데모 상태를 초기 상태로 되돌렸습니다.");
+    setNotice("최신 상태를 불러왔습니다.");
     window.setTimeout(() => setNotice(""), 3500);
   }
 
-  function logout() {
-    useLibraryStore.setState({ demoRole: null, roleSwitchTarget: null, dbFlowEvents: [] });
+  async function logout() {
+    try {
+      await useLibraryStore.getState().logout();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "로그아웃에 실패했습니다.");
+      return;
+    }
+    setNotice("");
     setMobileMenuOpen(false);
     navigate("/");
   }
@@ -167,7 +164,7 @@ export function AppShell() {
     }
   }
 
-  function selectTimelineEvent(eventId: string) {
+  function selectTimelineEvent(eventId: string | null) {
     setSelectedFlowEventId(eventId);
     setFlowPlaying(false);
   }
@@ -191,25 +188,24 @@ export function AppShell() {
               <small>LIBRARY SYSTEM</small>
             </span>
           </Link>
-          <LibraryNav role={demoRole} />
+          <LibraryNav role={role} />
           <div className="header-tools">
-            {demoRole === "ADMIN" && <select aria-label="데모 관리자 선택" value={demoAdminId} onChange={(event) => setDemoAdmin(Number(event.target.value))}>{users.filter((user) => user.role === "ADMIN" && user.accountStatus === "ACTIVE").map((user) => <option key={user.userId} value={user.userId}>관리자 #{user.userId}</option>)}</select>}
-            {demoRole === "LIBRARIAN" && <label className="header-librarian-select"><span className="sr-only">데모 사서 선택</span><select aria-label="데모 사서 선택" value={demoLibrarianId} onChange={(event) => setDemoLibrarian(Number(event.target.value))}>{users.filter((user) => user.role === "LIBRARIAN" && user.accountStatus === "ACTIVE").map((user) => <option key={user.userId} value={user.userId}>{user.fullName} · {user.userId}</option>)}</select></label>}
-            {demoRole && (
-              <button
-                className="header-reset"
-                onClick={logout}
-              >
+            {role && (
+              <button className="header-reset" onClick={logout}>
                 로그아웃
               </button>
             )}
             <Link
               className="top-nav-link"
-              to={demoRole ? "/account" : "/signup"}
+              to={role ? "/account" : "/signup"}
             >
-              {demoRole ? "내 계정" : "회원가입"}
+              {role ? "내 계정" : "회원가입"}
             </Link>
-            {!demoRole && <Link className="top-nav-link" to="/login">로그인</Link>}
+            {!role && (
+              <Link className="top-nav-link" to="/login">
+                로그인
+              </Link>
+            )}
             <button
               type="button"
               className={`flow-toggle ${flowOpen ? "active" : ""}`}
@@ -226,10 +222,10 @@ export function AppShell() {
             <button
               className="header-reset"
               onClick={handleReset}
-              title="데모 데이터를 초기 상태로 되돌립니다."
+              title="서버 DB의 최신 상태를 다시 불러옵니다."
             >
               <RotateCcw size={15} />
-              <span>초기화</span>
+              <span>새로고침</span>
             </button>
             <button
               className="mobile-menu-button"
@@ -241,8 +237,30 @@ export function AppShell() {
             </button>
           </div>
         </div>
-        {mobileMenuOpen && <div className="mobile-nav"><LibraryNav role={demoRole} mobile onNavigate={() => setMobileMenuOpen(false)} />{demoRole ? <button onClick={logout}>로그아웃</button> : <><Link to="/login" onClick={() => setMobileMenuOpen(false)}>로그인</Link><Link to="/signup" onClick={() => setMobileMenuOpen(false)}>회원가입</Link></>}<button onClick={handleReset}>데이터 초기화</button></div>}
+        {mobileMenuOpen && (
+          <div className="mobile-nav">
+            <LibraryNav
+              role={role}
+              mobile
+              onNavigate={() => setMobileMenuOpen(false)}
+            />
+            {role ? (
+              <button onClick={logout}>로그아웃</button>
+            ) : (
+              <>
+                <Link to="/login" onClick={() => setMobileMenuOpen(false)}>
+                  로그인
+                </Link>
+                <Link to="/signup" onClick={() => setMobileMenuOpen(false)}>
+                  회원가입
+                </Link>
+              </>
+            )}
+            <button onClick={handleReset}>데이터 새로고침</button>
+          </div>
+        )}
       </header>
+      {dataError && <p className="global-toast" role="alert">{dataError}</p>}
       {notice && (
         <div className="global-toast" role="status">
           {notice}
@@ -338,7 +356,16 @@ export function AppShell() {
           <strong>책담</strong>
           <span>도서관 통합 관리 시스템</span>
         </div>
-        <p>{location.pathname === "/" ? <><Link to="/#library-guide">이용 안내</Link> · <Link to="/signup">회원가입</Link> · 화면 데모</> : "설계 기반 화면 시연 · 실제 API와 데이터베이스 연결 없음"}</p>
+        <p>
+          {location.pathname === "/" ? (
+            <>
+              <Link to="/#library-guide">이용 안내</Link> ·{" "}
+              <Link to="/signup">회원가입</Link> · FastAPI & PostgreSQL 연동
+            </>
+          ) : (
+            "책담 도서관 통합 관리 시스템 · FastAPI & PostgreSQL 연동"
+          )}
+        </p>
       </footer>
     </div>
   );

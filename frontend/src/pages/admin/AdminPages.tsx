@@ -1,4 +1,4 @@
-﻿import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import {
   Bar,
   BarChart,
@@ -22,7 +22,7 @@ import {
   ShieldCheck,
   UsersRound,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { DataTable } from "../../components/tables/DataTable";
 import { CatalogFilters } from "../../components/catalog/CatalogFilters";
@@ -45,12 +45,13 @@ import {
   SectionHeading,
   SearchField,
 } from "../../components/ui/Primitives";
-import { getKoreanDate } from "../../data/mock/seed";
+import { getKoreanDate } from "../../services/korean-date";
 import {
   deriveLoanCounts,
   getAvailability,
   getAuthorsForBook,
   getOverdueDays,
+  normalizeIsbn,
 } from "../../services/library";
 import { useLibraryStore, type ActionResult } from "../../store/libraryStore";
 import type { Author, Book, BookFormValues } from "../../types/domain";
@@ -63,9 +64,11 @@ function useAdminData() {
       authors: state.authors,
       bookAuthors: state.bookAuthors,
       copies: state.copies,
+      occupiedCopyIds: state.occupiedCopyIds,
+      loanStatistics: state.loanStatistics,
       loans: state.loans,
       renewals: state.renewals,
-      demoRole: state.demoRole,
+      role: state.currentUser?.role,
     })),
   );
 }
@@ -105,15 +108,12 @@ function getMonthlyLoanStats(loans: ReturnType<typeof useAdminData>["loans"]) {
 
 export function AdminDashboardPage() {
   const data = useAdminData();
-  const counts = deriveLoanCounts(data);
+  const counts = data.loanStatistics ?? deriveLoanCounts(data);
   const members = data.users.filter((user) => user.role === "MEMBER");
-  const activeLoans = data.loans.filter(
-    (loan) => !loan.isCancelled && loan.returnedAt === null,
-  );
   const bookCounts = data.books
     .map((book) => ({
       book,
-      count: data.loans.filter(
+      count: data.loanStatistics?.byBook[book.bookId] ?? data.loans.filter(
         (loan) =>
           !loan.isCancelled &&
           data.copies.some(
@@ -127,13 +127,13 @@ export function AdminDashboardPage() {
 
   return (
     <WorkspaceLayout
-      section={data.demoRole === "LIBRARIAN" ? "librarian" : "admin"}
+      section={data.role === "LIBRARIAN" ? "librarian" : "admin"}
     >
       <PageHeading
         eyebrow="ADMINISTRATION · OVERVIEW"
         title="관리자 대시보드"
-        description="회원, 도서, 소장본과 대출 현황을 공유 데모 상태에서 집계합니다."
-        actions={<Badge tone="blue">DEMO ADMIN</Badge>}
+        description="회원, 도서, 소장본과 대출 현황을 공유 DB 데이터에서 집계합니다."
+        actions={<Badge tone="blue">ADMIN</Badge>}
       />
       <div className="metric-grid five">
         <MetricCard
@@ -231,16 +231,16 @@ export function AdminDashboardPage() {
               </div>
             ))}
           </div>
-          {activeLoans.length > 0 && (
+          {counts.active > 0 && (
             <p className="admin-recent-footnote">
-              현재 {activeLoans.length}건이 미반납 상태입니다.
+              현재 {counts.active}건이 미반납 상태입니다.
             </p>
           )}
         </Card>
       </div>
       <Notice tone="info" title="집계 기준">
-        모든 수치는 같은 Mock Data에서 계산합니다. 새 대출·반납·연장은 관리자
-        통계에도 즉시 반영됩니다.
+        모든 수치는 PostgreSQL DB 데이터에서 계산합니다. 새 대출·반납·연장은
+        관리자 통계에도 즉시 반영됩니다.
       </Notice>
     </WorkspaceLayout>
   );
@@ -252,7 +252,34 @@ export function AdminBooksPage() {
   const saveBook = useLibraryStore((state) => state.saveBook);
   const addCopy = useLibraryStore((state) => state.addCopy);
   const toggleCopyStatus = useLibraryStore((state) => state.toggleCopyStatus);
-  const [query, setQuery] = useState("");
+  const [params, setParams] = useSearchParams();
+  const query = params.get("q") ?? "";
+  const setQuery = (value: string) => {
+    setParams(
+      (currentParams) => {
+        if (value) {
+          currentParams.set("q", value);
+        } else {
+          currentParams.delete("q");
+        }
+        return currentParams;
+      },
+      { replace: true },
+    );
+  };
+  const searchBy = params.get("by");
+  const searchText = query.trim().toLocaleLowerCase();
+  let normalizedIsbn: string | null = null;
+  let isbnSearchError = "";
+  if (searchText) {
+    try {
+      normalizedIsbn = normalizeIsbn(query);
+    } catch (error) {
+      if (searchBy === "isbn") {
+        isbnSearchError = error instanceof Error ? error.message : "ISBN 형식을 확인하세요.";
+      }
+    }
+  }
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [result, setResult] = useState<ActionResult | null>(null);
@@ -260,7 +287,7 @@ export function AdminBooksPage() {
     .filter((book) => {
       if (!matchesCatalogFilters(book, data, filters)) return false;
       if (
-        data.demoRole !== "LIBRARIAN" &&
+        data.role !== "LIBRARIAN" &&
         !data.copies.some(
           (c) => c.bookId === book.bookId && c.managementStatus !== "RETIRED",
         )
@@ -269,9 +296,16 @@ export function AdminBooksPage() {
       const authors = getAuthorsForBook(book.bookId, data)
         .map((author) => author.authorName)
         .join(" ");
-      return `${book.title} ${book.isbn} ${authors}`
-        .toLocaleLowerCase()
-        .includes(query.trim().toLocaleLowerCase());
+      if (!searchText) return true;
+      if (searchBy === "isbn") return book.isbn !== null && book.isbn === normalizedIsbn;
+      if (searchBy === "author") return authors.toLocaleLowerCase().includes(searchText);
+      if (searchBy === "title") return book.title.toLocaleLowerCase().includes(searchText);
+      return (
+        `${book.title} ${book.isbn ?? ""} ${authors}`
+          .toLocaleLowerCase()
+          .includes(searchText) ||
+        (normalizedIsbn !== null && book.isbn === normalizedIsbn)
+      );
     })
     .sort(
       (a, b) => a.title.localeCompare(b.title, "ko") || a.bookId - b.bookId,
@@ -280,14 +314,14 @@ export function AdminBooksPage() {
 
   return (
     <WorkspaceLayout
-      section={data.demoRole === "LIBRARIAN" ? "librarian" : "admin"}
+      section={data.role === "LIBRARIAN" ? "librarian" : "admin"}
     >
       <PageHeading
         eyebrow="ADMINISTRATION · CATALOG"
         title="도서 관리"
         description="ISBN 기반 서지정보와 저자 연결, 개별 실물 소장본을 관리합니다."
         actions={
-          data.demoRole === "LIBRARIAN" && (
+          data.role === "LIBRARIAN" && (
             <Button
               onClick={() => {
                 setShowCreate(true);
@@ -305,8 +339,9 @@ export function AdminBooksPage() {
           value={query}
           onChange={setQuery}
           label="도서 검색"
-          placeholder="도서명, ISBN, 저자 검색"
+          placeholder={searchBy === "isbn" ? "ISBN-10 또는 ISBN-13" : "도서명, ISBN, 저자 검색"}
         />
+        {isbnSearchError && <p role="alert">{isbnSearchError}</p>}
         <span className="toolbar-count">
           {visibleBooks.length}종 · {data.copies.length}권
         </span>
@@ -336,7 +371,7 @@ export function AdminBooksPage() {
             {
               key: "isbn",
               title: "ISBN-13",
-              render: (book) => <code>{book.isbn}</code>,
+              render: (book) => <code>{book.isbn ?? "없음"}</code>,
             },
             {
               key: "copies",
@@ -379,7 +414,7 @@ export function AdminBooksPage() {
               key: "actions",
               title: "관리",
               render: (book) =>
-                data.demoRole === "LIBRARIAN" ? (
+                data.role === "LIBRARIAN" ? (
                   <Button onClick={() => setEditingBookId(book.bookId)}>
                     정보·소장본
                   </Button>
@@ -397,23 +432,22 @@ export function AdminBooksPage() {
       </Card>
       <Notice tone="info" title="삭제 제한">
         서지정보는 보존하며 제적은 소장본에만 적용합니다. ISBN은 선택 입력이며
-        ISBN-10/13을 검증합니다. 분류 코드는 합성 데모용이며 실제 목록은
-        미확정입니다.
+        ISBN-10/13을 검증합니다.
       </Notice>
       {showCreate && (
         <BookEditorModal
           key="create-book"
           data={data}
           onClose={() => setShowCreate(false)}
-          onSave={(values) => {
-            const outcome = saveBook(values);
+          onSave={async (values) => {
+            const outcome = await saveBook(values);
             setResult(outcome);
             if (outcome.ok) setShowCreate(false);
             return outcome;
           }}
         />
       )}
-      {editingBook && data.demoRole !== "LIBRARIAN" && (
+      {editingBook && data.role !== "LIBRARIAN" && (
         <Modal title={editingBook.title} onClose={() => setEditingBookId(null)}>
           <p>
             {getAuthorsForBook(editingBook.bookId, data)
@@ -426,7 +460,7 @@ export function AdminBooksPage() {
             {editingBook.publicationYear ?? "발행연도 미상"}
           </p>
           <p>
-            분류: 합성 데모 일반 · 전체 소장본{" "}
+            분류: {editingBook.categoryCode} · 전체 소장본{" "}
             {getAvailability(editingBook.bookId, data).total}권 / 대출 가능{" "}
             {getAvailability(editingBook.bookId, data).available}권
           </p>
@@ -444,7 +478,7 @@ export function AdminBooksPage() {
           />
         </Modal>
       )}
-      {editingBook && data.demoRole === "LIBRARIAN" && (
+      {editingBook && data.role === "LIBRARIAN" && (
         <BookEditorModal
           key={`edit-${editingBook.bookId}`}
           book={editingBook}
@@ -456,18 +490,21 @@ export function AdminBooksPage() {
           )}
           data={data}
           onClose={() => setEditingBookId(null)}
-          onSave={(values) => {
-            const outcome = saveBook(values, editingBook.bookId);
+          onSave={async (values) => {
+            const outcome = await saveBook(values, editingBook.bookId);
             setResult(outcome);
             if (outcome.ok) setEditingBookId(null);
             return outcome;
           }}
-          onAddCopy={(code) => {
-            const outcome = addCopy(editingBook.bookId, code);
+          onAddCopy={async (code) => {
+            const outcome = await addCopy(editingBook.bookId, code);
             setResult(outcome);
             return outcome;
           }}
-          onToggleCopy={(id) => setResult(toggleCopyStatus(id))}
+          onToggleCopy={async (id) => {
+            const outcome = await toggleCopyStatus(id);
+            setResult(outcome);
+          }}
         />
       )}
     </WorkspaceLayout>
@@ -489,9 +526,9 @@ function BookEditorModal({
   copies?: ReturnType<typeof useAdminData>["copies"];
   data?: ReturnType<typeof useAdminData>;
   onClose: () => void;
-  onSave: (values: BookFormValues) => ActionResult;
-  onAddCopy?: (code: string) => ActionResult;
-  onToggleCopy?: (id: number) => void;
+  onSave: (values: BookFormValues) => Promise<ActionResult> | ActionResult;
+  onAddCopy?: (code: string) => Promise<ActionResult> | ActionResult;
+  onToggleCopy?: (id: number) => Promise<void> | void;
 }) {
   const [values, setValues] = useState<BookFormValues>({
     isbn: book?.isbn ?? "",
@@ -508,26 +545,39 @@ function BookEditorModal({
     categoryCode: book?.categoryCode ?? "DEMO_GENERAL",
   });
   const [copyCode, setCopyCode] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [addingCopy, setAddingCopy] = useState(false);
   const [message, setMessage] = useState<ActionResult | null>(null);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const outcome = onSave(values);
-    setMessage(outcome);
+    if (saving) return;
+    setSaving(true);
+    try {
+      const outcome = await onSave(values);
+      setMessage(outcome);
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function submitCopy(event: FormEvent<HTMLFormElement>) {
+  async function submitCopy(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!onAddCopy) return;
-    const outcome = onAddCopy(copyCode);
-    setMessage(outcome);
-    if (outcome.ok) setCopyCode("");
+    if (!onAddCopy || addingCopy) return;
+    setAddingCopy(true);
+    try {
+      const outcome = await onAddCopy(copyCode);
+      setMessage(outcome);
+      if (outcome.ok) setCopyCode("");
+    } finally {
+      setAddingCopy(false);
+    }
   }
 
   return (
     <Modal
       title={book ? "도서 정보 수정" : "도서 등록"}
-      description="서지정보와 author 연결을 Mock Store에 저장합니다."
+      description="서지정보와 저자 연결을 PostgreSQL DB에 저장합니다."
       onClose={onClose}
       wide
     >
@@ -556,7 +606,7 @@ function BookEditorModal({
               />
             </Field>
           </div>
-          <Field label="분류 · 임시 데모 코드">
+          <Field label="분류 코드">
             <input value={values.categoryCode} readOnly />
           </Field>
           <label>
@@ -635,7 +685,9 @@ function BookEditorModal({
             <Button variant="secondary" type="button" onClick={onClose}>
               취소
             </Button>
-            <Button type="submit">{book ? "변경 저장" : "도서 등록"}</Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? "저장 중…" : book ? "변경 저장" : "도서 등록"}
+            </Button>
           </ModalFooter>
         </form>
         {book && data && onAddCopy && onToggleCopy && (
@@ -659,9 +711,10 @@ function BookEditorModal({
               <Button
                 type="submit"
                 variant="secondary"
+                disabled={addingCopy}
                 icon={<Plus size={15} />}
               >
-                추가
+                {addingCopy ? "추가 중…" : "추가"}
               </Button>
             </form>
             <div className="copy-admin-list">
@@ -705,6 +758,7 @@ export function AdminAuthorsPage() {
   const [newName, setNewName] = useState("");
   const [editingAuthor, setEditingAuthor] = useState<Author | null>(null);
   const [editingName, setEditingName] = useState("");
+  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ActionResult | null>(null);
   const authors = useMemo(
     () =>
@@ -714,24 +768,35 @@ export function AdminAuthorsPage() {
     [data.authors],
   );
 
-  function submitAuthor(event: FormEvent<HTMLFormElement>) {
+  async function submitAuthor(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const outcome = addAuthor(newName);
-    setResult(outcome);
-    if (outcome.ok) setNewName("");
+    if (busy) return;
+    setBusy(true);
+    try {
+      const outcome = await addAuthor(newName);
+      setResult(outcome);
+      if (outcome.ok) setNewName("");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function submitRename(event: FormEvent<HTMLFormElement>) {
+  async function submitRename(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!editingAuthor) return;
-    const outcome = renameAuthor(editingAuthor.authorId, editingName);
-    setResult(outcome);
-    if (outcome.ok) setEditingAuthor(null);
+    if (!editingAuthor || busy) return;
+    setBusy(true);
+    try {
+      const outcome = await renameAuthor(editingAuthor.authorId, editingName);
+      setResult(outcome);
+      if (outcome.ok) setEditingAuthor(null);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <WorkspaceLayout
-      section={data.demoRole === "LIBRARIAN" ? "librarian" : "admin"}
+      section={data.role === "LIBRARIAN" ? "librarian" : "admin"}
     >
       <PageHeading
         eyebrow="ADMINISTRATION · AUTHORS"
@@ -741,7 +806,7 @@ export function AdminAuthorsPage() {
       />
       {result && <ResultMessage message={result.message} error={!result.ok} />}
       <form
-        hidden={data.demoRole !== "LIBRARIAN"}
+        hidden={data.role !== "LIBRARIAN"}
         className="author-create-form"
         onSubmit={submitAuthor}
       >
@@ -757,8 +822,8 @@ export function AdminAuthorsPage() {
             placeholder="저자 이름을 입력하세요"
           />
         </Field>
-        <Button type="submit" icon={<Plus size={15} />}>
-          저자 등록
+        <Button type="submit" disabled={busy} icon={<Plus size={15} />}>
+          {busy ? "등록 중…" : "저자 등록"}
         </Button>
       </form>
       <Card className="table-card">
@@ -820,7 +885,7 @@ export function AdminAuthorsPage() {
               title: "관리",
               render: (author) => (
                 <Button
-                  disabled={data.demoRole !== "LIBRARIAN"}
+                  disabled={data.role !== "LIBRARIAN"}
                   variant="secondary"
                   onClick={() => {
                     setEditingAuthor(author);
@@ -864,8 +929,8 @@ export function AdminAuthorsPage() {
               >
                 취소
               </Button>
-              <Button type="submit" icon={<Pencil size={14} />}>
-                저자명 저장
+              <Button type="submit" disabled={busy} icon={<Pencil size={14} />}>
+                {busy ? "저장 중…" : "저자명 저장"}
               </Button>
             </ModalFooter>
           </form>
@@ -877,12 +942,12 @@ export function AdminAuthorsPage() {
 
 export function AdminStatisticsPage() {
   const data = useAdminData();
-  const counts = deriveLoanCounts(data);
-  const monthly = useMemo(() => getMonthlyLoanStats(data.loans), [data.loans]);
+  const counts = data.loanStatistics ?? deriveLoanCounts(data);
+  const monthly = data.loanStatistics?.monthly ?? getMonthlyLoanStats(data.loans);
   const byBook = data.books
     .map((book) => ({
       book: book.title,
-      loans: data.loans.filter(
+      loans: data.loanStatistics?.byBook[book.bookId] ?? data.loans.filter(
         (loan) =>
           data.copies.find((copy) => copy.copyId === loan.copyId)?.bookId ===
           book.bookId,
@@ -894,30 +959,30 @@ export function AdminStatisticsPage() {
     .filter((user) => user.role === "LIBRARIAN")
     .map((user) => ({
       user,
-      checkouts: data.loans.filter(
+      checkouts: data.loanStatistics?.byLibrarian[user.userId]?.checkouts ?? data.loans.filter(
         (loan) => loan.checkedOutByUserId === user.userId,
       ).length,
-      returns: data.loans.filter(
+      returns: data.loanStatistics?.byLibrarian[user.userId]?.returns ?? data.loans.filter(
         (loan) => loan.returnedByUserId === user.userId,
       ).length,
     }));
-  const overdueHistory = data.loans.filter(
+  const overdueHistory = data.loanStatistics?.overdueHistory ?? data.loans.filter(
     (loan) => loan.returnedAt !== null && getOverdueDays(loan) > 0,
   ).length;
 
   return (
     <WorkspaceLayout
-      section={data.demoRole === "LIBRARIAN" ? "librarian" : "admin"}
+      section={data.role === "LIBRARIAN" ? "librarian" : "admin"}
     >
       <PageHeading
         eyebrow="ADMINISTRATION · ANALYTICS"
         title="업무 통계"
-        description="대출, 반납, 연체, 도서별·사서별 이력을 동일한 데모 기록에서 계산합니다."
+        description="대출, 반납, 연체, 도서별·사서별 이력을 동일한 PostgreSQL 기록에서 계산합니다."
       />
       <div className="metric-grid four">
         <MetricCard
           label="누적 대출"
-          value={data.loans.length}
+          value={data.loanStatistics?.total ?? data.loans.length}
           note="현재·과거 이력 포함"
           icon={<BookCopy size={17} />}
           tone="navy"
@@ -948,7 +1013,7 @@ export function AdminStatisticsPage() {
         <Card className="chart-card">
           <SectionHeading
             title="월별 대출·반납"
-            description="최근 6개월의 실제 Mock Loan 기록"
+            description="최근 6개월의 실제 대출·반납 기록"
           />
           <div className="chart-canvas">
             <ResponsiveContainer width="100%" height="100%">

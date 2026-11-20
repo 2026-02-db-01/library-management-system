@@ -1,7 +1,9 @@
-﻿import { test, expect } from "@playwright/test";
+import { installApiFixture } from "./api-fixture";
+import { test, expect } from "@playwright/test";
 test("primary screens fit mobile, tablet and desktop without document overflow", async ({
   page,
 }) => {
+  const api = await installApiFixture(page);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
@@ -27,12 +29,7 @@ test("primary screens fit mobile, tablet and desktop without document overflow",
         ],
       ],
     ] as const) {
-      await page.evaluate(async (role) => {
-        const { useLibraryStore: s } =
-          await import("/src/store/libraryStore.ts");
-        s.getState().requestRoleSwitch(role, "/");
-        s.getState().completeRoleSwitch();
-      }, role);
+      api.setRole(role);
       for (const path of paths) {
         await page.goto(path);
         await expect(page.getByRole("heading", { level: 1 })).toBeVisible();

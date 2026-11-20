@@ -24,7 +24,7 @@ export function LibraryNav({ role, mobile = false, onNavigate }: { role: UserRol
       return <div className="library-nav-group" key={group.label} onMouseEnter={() => !mobile && setOpen(group.label)}>
         <button type="button" className={`library-nav-trigger ${group.items.some((item) => item.to.split("?")[0] === location.pathname && location.pathname !== "/") ? "active" : ""}`} aria-expanded={expanded} aria-controls={`${mobile ? "mobile" : "desktop"}-${group.label}`} onClick={() => setOpen(expanded ? null : group.label)}>{group.label}<span aria-hidden="true">⌄</span></button>
         <div id={`${mobile ? "mobile" : "desktop"}-${group.label}`} className="library-nav-dropdown" hidden={!expanded}>
-          {group.items.map((item) => { const allowed = !item.role || role === item.role || (item.to === "/account" && !!role); const target = allowed ? item.to : `/login?next=${encodeURIComponent(item.to)}`; return <Link key={item.label} to={target} onClick={() => { setOpen(null); onNavigate?.(); }}>{item.label}</Link>; })}
+          {group.items.map((item) => { const allowed = !item.role || role === item.role || (item.to === "/account" && !!role); const staffCatalog = item.to.startsWith("/user/books") && (role === "LIBRARIAN" || role === "ADMIN"); const target = staffCatalog ? item.to.replace("/user", role === "LIBRARIAN" ? "/librarian" : "/admin") : allowed ? item.to : `/login?next=${encodeURIComponent(item.to)}`; return <Link key={item.label} to={target} onClick={() => { setOpen(null); onNavigate?.(); }}>{item.label}</Link>; })}
         </div>
       </div>;
     })}

@@ -1,6 +1,6 @@
 ﻿# 책담 프론트엔드 V2
 
-React + TypeScript + Vite 기반 도서관 통합 관리 Mock 데모입니다. 최신 GitHub Wiki의 12테이블·5권 대출 정책을 반영합니다. 실제 PostgreSQL, FastAPI, 인증 서버, SQL 실행은 연결하지 않습니다.
+React + TypeScript + Vite 기반 도서관 통합 관리 프론트엔드입니다. 최신 GitHub Wiki의 12테이블·5권 대출 정책을 반영하며, 실제 FastAPI·PostgreSQL 16 API와 연동됩니다. 개발에서는 Vite `/api` 프록시, 배포에서는 `VITE_API_BASE_URL`로 백엔드를 지정합니다. 발표용 화면과 DB Console의 시뮬레이션은 실제 API·DB 검증 자료와 별개입니다.
 
 ## 실행·검증
 
@@ -12,9 +12,12 @@ npm run lint
 npm test
 npm run build
 npm run test:e2e
+npm run test:e2e:live
 ```
 
-E2E는 설치된 Chrome과 포트 5174를 사용합니다. 개발 서버를 자동 기동합니다. `npm test`는 Store·업무 규칙·메타데이터 테스트이고 E2E와 분리됩니다.
+`npm run test:e2e`는 Mock API Fixture(`e2e/api-fixture.ts`) 기반 19개 테스트로, 설치된 Chrome과 포트 5174를 사용하며 개발 서버를 자동 기동합니다. `npm test`는 Store·업무 규칙·메타데이터 단위 테스트입니다.
+
+`npm run test:e2e:live`는 `e2e/live/`의 실제 Full-stack E2E입니다. 격리된 PostgreSQL 16 컨테이너, 실제 FastAPI(8001), Vite(5175)를 자동으로 띄우고 Mock 없이 실행한 뒤 테스트 스택만 정리합니다. Docker와 Chrome이 필요합니다.
 
 ## 화면
 
@@ -26,7 +29,7 @@ E2E는 설치된 Chrome과 포트 5174를 사용합니다. 개발 서버를 자�
 
 ## 구현·미확정 정책
 
-상단 역할 선택은 데모이며 인증이나 서버 권한 보장이 아닙니다. 상태는 브라우저에 저장하고 구버전·손상 데이터는 새 합성 시드로 초기화합니다. 초기화 버튼은 현재 데모 변경을 되돌립니다.
+사용자 역할과 권한은 서버 세션(/api/v1/auth/me)과 FastAPI 의존성에서 결정됩니다. 브라우저에 저장되는 것은 세션 쿠키이며 데이터는 실제 API에서 조회합니다. DB Console의 트랜잭션 흐름은 설명용 시뮬레이션이며 실제 SQL 실행 결과와 구분합니다.
 
 [전체 구현·검증·제한 사항](docs/V2-IMPLEMENTATION.md), [디자인](DESIGN.md), [원문 모델](docs/wiki/physical-model.md)을 참고하세요. Wiki 기준 SHA는 `9e698003329b281ef36efea19fe48e2f0c0eaa8e`입니다. `../database/schema.sql`은 구버전이며 수정하거나 실행하지 않았습니다.
 

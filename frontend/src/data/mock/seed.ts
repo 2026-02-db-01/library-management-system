@@ -1,19 +1,7 @@
 ﻿import type { LibraryData } from "../../types/domain";
 
-export function getKoreanDate(date = new Date()): string {
-  return new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-}
-
-export function addDays(date: string, amount: number): string {
-  const value = new Date(`${date}T00:00:00.000Z`);
-  value.setUTCDate(value.getUTCDate() + amount);
-  return value.toISOString().slice(0, 10);
-}
+import { addDays, getKoreanDate } from "../../services/korean-date";
+export { addDays, getKoreanDate } from "../../services/korean-date";
 
 function timestampAt(date: string, time = "10:15:00"): string {
   return new Date(`${date}T${time}+09:00`).toISOString();
