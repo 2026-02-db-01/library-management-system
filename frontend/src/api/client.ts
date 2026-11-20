@@ -9,6 +9,16 @@ export class ApiError extends Error {
   }
 }
 
+// 빌드 시점에 주입된다. 비어 있으면 상대 경로(/api/...)를 사용해
+// Vite 개발 서버의 프록시가 로컬 FastAPI로 전달한다.
+// GitHub Pages처럼 백엔드가 별도 호스트라면 VITE_API_BASE_URL에 FastAPI 주소를 지정한다.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+
+export function apiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path
+  return `${API_BASE_URL}${path}`
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
@@ -20,7 +30,7 @@ export async function apiRequest<T>(
 
   const timeout = AbortSignal.timeout(15_000)
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     ...options,
     headers,
     signal,
