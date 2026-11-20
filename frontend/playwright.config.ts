@@ -1,6 +1,8 @@
 ﻿import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
+  // 실제 API·DB를 쓰는 e2e/live/ 는 playwright.live.config.ts 에서만 실행한다.
+  testIgnore: "e2e/live/**",
   timeout: 120000,
   webServer: {
     command: "npm run dev -- --host 127.0.0.1 --port 5174 --strictPort",

@@ -17,4 +17,13 @@ export default tseslint.config(
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
+  {
+    // 실제 API 응답은 스키마가 열려 있어 테스트 헬퍼에서 동적 타입을 사용한다.
+    files: ['e2e/live/**/*.ts'],
+    rules: { '@typescript-eslint/no-explicit-any': 'off' },
+  },
+  {
+    files: ['scripts/*.mjs'],
+    languageOptions: { globals: globals.node },
+  },
 )
