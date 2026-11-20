@@ -9,9 +9,9 @@ export class ApiError extends Error {
   }
 }
 
-// 빌드 시점에 주입된다. 비어 있으면 상대 경로(/api/...)를 사용해
-// Vite 개발 서버의 프록시가 로컬 FastAPI로 전달한다.
-// GitHub Pages처럼 백엔드가 별도 호스트라면 VITE_API_BASE_URL에 FastAPI 주소를 지정한다.
+// 빌드 시점에 주입된다. 비어 있으면 상대 경로(/api/...)를 사용한다.
+// 개발에서는 Vite 프록시가, 운영(OCI)에서는 같은 도메인의 nginx가 FastAPI로 전달한다.
+// 백엔드가 다른 출처일 때만(예: live E2E) VITE_API_BASE_URL에 FastAPI 주소를 지정한다.
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
 
 export function apiUrl(path: string): string {

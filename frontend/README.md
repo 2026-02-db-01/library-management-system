@@ -1,6 +1,6 @@
 ﻿# 책담 프론트엔드 V2
 
-React + TypeScript + Vite 기반 도서관 통합 관리 프론트엔드입니다. 최신 GitHub Wiki의 12테이블·5권 대출 정책을 반영하며, 실제 FastAPI·PostgreSQL 16 API와 연동됩니다. 개발에서는 Vite `/api` 프록시, 배포에서는 `VITE_API_BASE_URL`로 백엔드를 지정합니다. 발표용 화면과 DB Console의 시뮬레이션은 실제 API·DB 검증 자료와 별개입니다.
+React + TypeScript + Vite 기반 도서관 통합 관리 프론트엔드입니다. 최신 GitHub Wiki의 12테이블·5권 대출 정책을 반영하며, 실제 FastAPI·PostgreSQL 16 API와 연동됩니다. 개발에서는 Vite `/api` 프록시가, 운영(OCI, https://library.misakachan.moe)에서는 같은 도메인의 nginx가 `/api`를 FastAPI로 넘기므로 `VITE_API_BASE_URL`은 비워 둡니다([배포 절차](../deploy/oci/README.md)). GitHub Pages 빌드는 백엔드 없는 정적 미리보기입니다. 발표용 화면과 DB Console의 시뮬레이션은 실제 API·DB 검증 자료와 별개입니다.
 
 ## 실행·검증
 
@@ -31,6 +31,6 @@ npm run test:e2e:live
 
 사용자 역할과 권한은 서버 세션(/api/v1/auth/me)과 FastAPI 의존성에서 결정됩니다. 브라우저에 저장되는 것은 세션 쿠키이며 데이터는 실제 API에서 조회합니다. DB Console의 트랜잭션 흐름은 설명용 시뮬레이션이며 실제 SQL 실행 결과와 구분합니다.
 
-[전체 구현·검증·제한 사항](docs/V2-IMPLEMENTATION.md), [디자인](DESIGN.md), [원문 모델](docs/wiki/physical-model.md)을 참고하세요. Wiki 기준 SHA는 `9e698003329b281ef36efea19fe48e2f0c0eaa8e`입니다. `../database/schema.sql`은 구버전이며 수정하거나 실행하지 않았습니다.
+[전체 구현·검증·제한 사항](docs/V2-IMPLEMENTATION.md), [디자인](DESIGN.md), [원문 모델](docs/wiki/physical-model.md)을 참고하세요. Wiki 기준 SHA는 `9e698003329b281ef36efea19fe48e2f0c0eaa8e`입니다. DB 스키마는 Wiki 03-03을 구현한 [`../database/schema.sql`](../database/schema.sql)입니다.
 
 분류 목록, 날짜 정정의 세부 운영·증빙, 탈퇴 전 ID 재사용, 실제 비밀번호/초기 인증, 요청 결과 보관·실패 캐싱은 미확정입니다. 안전한 제한과 Mock 표식을 적용했으며 운영 정책을 임의로 확정하지 않았습니다.
