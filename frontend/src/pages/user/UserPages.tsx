@@ -326,8 +326,7 @@ export function UserBooksPage() {
       )}
       <Notice tone="info" title="대출은 사서 데스크에서 진행합니다.">
         이 화면에서는 도서와 소장 상태를 확인할 수 있습니다. 대출 신청·예약·결제
-        기능은 제공하지 않습니다.{" "}
-        <Link to="/librarian/checkout">사서 대출 화면 보기</Link>
+        기능은 제공하지 않습니다.
       </Notice>
 
       {selectedBook && selectedAvailability && (
@@ -574,13 +573,13 @@ export function UserLoansPage() {
             <Card>
               <EmptyState
                 title="현재 대출 중인 도서가 없습니다"
-                description="대출은 사서 데스크에서 처리할 수 있습니다."
+                description="대출은 사서 데스크에서 처리할 수 있습니다. 도서를 검색해 대출 가능 여부를 확인해 보세요."
                 action={
                   <Link
                     className="button button-secondary"
-                    to="/librarian/checkout"
+                    to="/user/books"
                   >
-                    사서 화면 보기
+                    도서 검색하기
                   </Link>
                 }
               />
