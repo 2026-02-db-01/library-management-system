@@ -403,22 +403,52 @@ def search_books(
     return results
 
 
+CATEGORY_COPY_PREFIX = {
+    "CS": "CS",
+    "NOVEL": "NV",
+    "HISTORY": "HS",
+    "SCIENCE": "SC",
+}
+
+
+def _copy_prefix(category_code: str) -> str:
+    upper = category_code.strip().upper()
+    if upper in CATEGORY_COPY_PREFIX:
+        return CATEGORY_COPY_PREFIX[upper]
+    cleaned = re.sub(r"[^A-Z0-9]", "", upper)
+    return (cleaned[:2] or "BK").ljust(2, "X")
+
+
 def add_copy(db: Session, book_id: int) -> BookCopy:
-    book = db.get(Book, book_id)
+    book = db.scalar(select(Book).where(Book.book_id == book_id).with_for_update())
     if book is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "BOOK_NOT_FOUND", "message": "도서를 찾을 수 없습니다."},
         )
 
-    serial = db.scalar(select(func.nextval(func.pg_get_serial_sequence("book_copy", "copy_id"))))
-    while db.scalar(select(BookCopy.copy_id).where(BookCopy.copy_code == f"CD-{serial}")) is not None:
-        serial = db.scalar(select(func.nextval(func.pg_get_serial_sequence("book_copy", "copy_id"))))
+    prefix = _copy_prefix(book.category_code)
+    base = f"{prefix}-{book_id:04d}-"
+    pattern = re.compile(rf"^{re.escape(base)}(\d+)$")
+
+    existing_codes = list(
+        db.scalars(select(BookCopy.copy_code).where(BookCopy.book_id == book_id)).all()
+    )
+    max_seq = 0
+    for code in existing_codes:
+        matched = pattern.match(code)
+        if matched:
+            max_seq = max(max_seq, int(matched.group(1)))
+
+    next_seq = max_seq + 1
+    candidate = f"{base}{next_seq:02d}"
+    while db.scalar(select(BookCopy.copy_id).where(BookCopy.copy_code == candidate)) is not None:
+        next_seq += 1
+        candidate = f"{base}{next_seq:02d}"
 
     copy = BookCopy(
-        copy_id=serial,
         book_id=book_id,
-        copy_code=f"CD-{serial}",
+        copy_code=candidate,
         management_status="ACTIVE",
     )
     db.add(copy)
@@ -459,19 +489,18 @@ def change_copy_status(
             message="변경 사유에 회원 개인정보를 입력할 수 없습니다.",
         )
 
-    if payload.status != "DAMAGED":
-        active_loan = db.scalar(
-            select(Loan).where(
-                Loan.copy_id == copy_id,
-                Loan.is_cancelled.is_(False),
-                Loan.returned_at.is_(None),
-            )
+    active_loan = db.scalar(
+        select(Loan).where(
+            Loan.copy_id == copy_id,
+            Loan.is_cancelled.is_(False),
+            Loan.returned_at.is_(None),
         )
-        if active_loan is not None:
-            raise ConflictException(
-                code="COPY_CURRENTLY_BORROWED",
-                message="미반납 소장본은 수리 완료·제적할 수 없습니다.",
-            )
+    )
+    if active_loan is not None:
+        raise ConflictException(
+            code="COPY_CURRENTLY_BORROWED",
+            message="미반납 대출 중인 소장본은 상태를 변경할 수 없습니다. 반납 처리에서 파손 반납을 이용하세요.",
+        )
 
     db.add(
         CopyStatusHistory(
