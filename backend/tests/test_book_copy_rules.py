@@ -34,9 +34,30 @@ def test_add_copy_generates_next_sequence_after_seed_and_legacy_codes() -> None:
     db.commit.assert_called_once()
 
 
-def test_change_copy_status_blocks_damaged_when_actively_borrowed() -> None:
+def test_add_copy_skips_colliding_candidate_to_guarantee_uniqueness() -> None:
     db = MagicMock()
-    copy = BookCopy(copy_id=1, book_id=1, copy_code="CS-0001-01", management_status="ACTIVE")
+    db.scalar.side_effect = [
+        Book(book_id=7, title="별을 세는 물리학", category_code="SCIENCE"),
+        99,    # SC-0007-03 already exists
+        None,  # SC-0007-04 is free
+    ]
+    db.scalars.return_value.all.return_value = ["SC-0007-01", "SC-0007-02"]
+
+    copy = add_copy(db, 7)
+
+    assert copy.copy_code == "SC-0007-04"
+
+
+@pytest.mark.parametrize(
+    ("current_status", "target_status"),
+    [("ACTIVE", "DAMAGED"), ("DAMAGED", "ACTIVE"), ("ACTIVE", "RETIRED")],
+)
+def test_change_copy_status_blocks_all_transitions_when_actively_borrowed(
+    current_status: str,
+    target_status: str,
+) -> None:
+    db = MagicMock()
+    copy = BookCopy(copy_id=1, book_id=1, copy_code="CS-0001-01", management_status=current_status)
     active_loan = SimpleNamespace(loan_id=10, copy_id=1, is_cancelled=False, returned_at=None)
     db.scalar.side_effect = [copy, active_loan]
     db.scalars.return_value.all.return_value = []
@@ -45,8 +66,26 @@ def test_change_copy_status_blocks_damaged_when_actively_borrowed() -> None:
         change_copy_status(
             db,
             1,
-            CopyStatusUpdateRequest(status="DAMAGED", reason="대출 중 파손 변경 시도"),
+            CopyStatusUpdateRequest(status=target_status, reason="대출 중 상태 변경 시도"),
             librarian_id=2,
         )
 
     assert exc_info.value.code == "COPY_CURRENTLY_BORROWED"
+
+
+def test_change_copy_status_allows_repair_after_return() -> None:
+    db = MagicMock()
+    copy = BookCopy(copy_id=1, book_id=1, copy_code="CS-0001-01", management_status="DAMAGED")
+    db.scalar.side_effect = [copy, None]
+    db.scalars.return_value.all.return_value = []
+
+    updated = change_copy_status(
+        db,
+        1,
+        CopyStatusUpdateRequest(status="ACTIVE", reason="수리 완료"),
+        librarian_id=2,
+    )
+
+    assert updated.management_status == "ACTIVE"
+    db.add.assert_called_once()
+    db.commit.assert_called_once()
