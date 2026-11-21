@@ -1,0 +1,30 @@
+# OCI 서버 /srv/stacks/library/compose.yml
+# DB 는 이 서버에 없다: N100 의 PostgreSQL 이 역방향 SSH 터널로 이 서버 127.0.0.1:5433 에 붙어 있다.
+# 터널이 127.0.0.1 에만 열려 있으므로 두 컨테이너 모두 host 네트워크를 쓴다.
+#   127.0.0.1:8100  web (nginx: 정적 프론트 + /api 프록시)  ← 호스트 nginx 443 이 여기로 보냄
+#   127.0.0.1:8101  api (uvicorn, 외부에서 직접 접근 불가)
+# 이미지는 PC 에서 빌드: deploy/oci/build_and_ship.sh
+# 켜기/끄기는 /srv/stacks/switch.sh library | none  (docker compose down -v 금지)
+name: library
+services:
+  api:
+    image: library-api:latest
+    restart: unless-stopped
+    mem_limit: 256m
+    network_mode: host
+    env_file: .env          # DATABASE_URL, SECRET_KEY, DEBUG=false, CORS_ORIGINS (chmod 600)
+    command: ["uvicorn", "src.main:app", "--host", "127.0.0.1", "--port", "8101",
+              "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8101/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    image: library-web:latest
+    restart: unless-stopped
+    mem_limit: 48m
+    network_mode: host
+    depends_on:
+      - api

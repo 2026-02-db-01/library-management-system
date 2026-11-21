@@ -1,3 +1,5 @@
+# 백엔드 없는 정적 미리보기(화면 구경용). 로그인·데이터 조회는 동작하지 않는다.
+# 운영 배포는 OCI: deploy/oci/README.md
 name: Deploy Chaekdam to GitHub Pages
 
 on:
