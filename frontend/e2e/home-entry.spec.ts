@@ -8,7 +8,7 @@ test("desktop menus support hover, keyboard, and protected navigation", async ({
   const books = nav.getByRole("button", { name: "도서 검색" });
   await books.hover();
   await expect(books).toHaveAttribute("aria-expanded", "true");
-  await expect(nav.getByRole("link", { name: "상세 검색" })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "도서 검색" })).toBeVisible();
   const shelf = nav.getByRole("button", { name: "내 서재" });
   await shelf.hover();
   await expect(books).toHaveAttribute("aria-expanded", "false");

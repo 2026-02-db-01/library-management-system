@@ -6,8 +6,8 @@ import "./library-nav.css";
 type Item = { label: string; to: string; role?: UserRole };
 type Group = { label: string; items: Item[]; role?: UserRole };
 const groups: Group[] = [
-  { label: "도서 검색", items: [{ label: "도서 검색", to: "/user/books", role: "MEMBER" }, { label: "상세 검색", to: "/user/books?advanced=1", role: "MEMBER" }] },
-  { label: "내 서재", items: [{ label: "내 대출 현황", to: "/user/loans", role: "MEMBER" }, { label: "이용 이력", to: "/user/loans", role: "MEMBER" }, { label: "내 계정", to: "/account", role: "MEMBER" }] },
+  { label: "도서 검색", items: [{ label: "도서 검색", to: "/user/books", role: "MEMBER" }] },
+  { label: "내 서재", items: [{ label: "내 대출 현황", to: "/user/loans", role: "MEMBER" }, { label: "내 계정", to: "/account", role: "MEMBER" }] },
   { label: "이용 안내", items: [{ label: "도서관 이용 안내", to: "/#library-guide" }] },
   { label: "회원정보", items: [{ label: "회원가입", to: "/signup" }, { label: "내 정보 수정", to: "/account", role: "MEMBER" }] },
   { label: "사서 업무", role: "LIBRARIAN", items: [{ label: "업무 현황", to: "/librarian" }, { label: "도서 대출", to: "/librarian/checkout" }, { label: "도서 반납", to: "/librarian/returns" }, { label: "도서 관리", to: "/librarian/books" }, { label: "저자 관리", to: "/librarian/authors" }, { label: "소장본 상태", to: "/librarian/copies" }, { label: "대출·반납 정정", to: "/librarian/corrections" }, { label: "연체 조회", to: "/librarian/overdue" }] },

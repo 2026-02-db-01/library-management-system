@@ -333,12 +333,27 @@ export function AccountsPage() {
             {
               key: "identity",
               title: "이름 · 로그인 ID",
-              render: (u) => (
-                <span className="table-title-cell">
-                  <strong>{u.fullName ?? "이름 없음"}</strong>
-                  <small>{u.loginId ?? "—"}</small>
-                </span>
-              ),
+              render: (u) => {
+                const isMaskedMember = u.role === "MEMBER" && u.fullName === null;
+                return (
+                  <span className="table-title-cell">
+                    <strong>
+                      {isMaskedMember
+                        ? u.accountStatus === "WITHDRAWN"
+                          ? "탈퇴 회원"
+                          : "일반 회원 (개인정보 비공개)"
+                        : (u.fullName ?? "이름 없음")}
+                    </strong>
+                    <small>
+                      {isMaskedMember
+                        ? u.accountStatus === "WITHDRAWN"
+                          ? "개인정보 삭제됨"
+                          : `회원 #${u.userId}`
+                        : (u.loginId ?? "—")}
+                    </small>
+                  </span>
+                );
+              },
             },
             { key: "role", title: "역할", render: (u) => u.role },
             { key: "status", title: "상태", render: (u) => u.accountStatus },
@@ -488,19 +503,36 @@ export function CopiesPage() {
             {
               key: "action",
               title: "작업",
-              render: (c) => (
-                <Button
-                  variant="secondary"
-                  disabled={c.managementStatus === "RETIRED"}
-                  onClick={() => {
-                    setResult(null);
-                    setTarget(c.copyId);
-                    setReason("");
-                  }}
-                >
-                  상태 변경
-                </Button>
-              ),
+              render: (c) => {
+                const borrowed = s.loans.some(
+                  (l) => l.copyId === c.copyId && isActiveLoan(l),
+                );
+                const disabled = c.managementStatus === "RETIRED" || borrowed;
+                return (
+                  <Button
+                    variant="secondary"
+                    disabled={disabled}
+                    title={
+                      borrowed
+                        ? "대출 중인 소장본은 반납 처리 후 상태를 변경할 수 있습니다."
+                        : c.managementStatus === "RETIRED"
+                          ? "제적된 소장본은 상태를 변경할 수 없습니다."
+                          : undefined
+                    }
+                    onClick={() => {
+                      setResult(null);
+                      setTarget(c.copyId);
+                      setReason("");
+                    }}
+                  >
+                    {borrowed
+                      ? "대출 중 (변경 불가)"
+                      : c.managementStatus === "RETIRED"
+                        ? "제적 완료"
+                        : "상태 변경"}
+                  </Button>
+                );
+              },
             },
           ]}
         />
